@@ -11,7 +11,7 @@ readme = "README.md"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["src*", "agents*", "app*", "config*"]
+include = ["src*", "agents*", "app*", "config*", "memory*"]
 
 [tool.black]
 line-length = 100

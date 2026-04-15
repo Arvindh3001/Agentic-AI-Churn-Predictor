@@ -50,6 +50,9 @@ anthropic>=0.35
 chromadb>=0.5
 tiktoken>=0.7
 
+# ---- Phase 4: Advanced Agents (Optimization) ----
+pulp>=2.8
+
 # ---- Phase 5: HITL + Notifications ----
 slack-sdk>=3.30
 httpx>=0.27

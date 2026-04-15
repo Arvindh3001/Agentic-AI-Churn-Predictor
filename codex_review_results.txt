@@ -1,0 +1,179 @@
+====================================================================
+CODEX REVIEW RESULTS
+Date: 2026-04-15
+Project: Churn Intelligence Platform
+====================================================================
+
+
+--------------------------------------------------------------------
+REVIEW 1: Standard Review (review-mnzqq9xd-1m01pi)
+Duration: 2m 25s
+--------------------------------------------------------------------
+
+Target: working tree diff
+
+The async orchestration path cannot be polled with the id it returns, and SHAP
+extraction is incompatible with a common return shape from current SHAP versions.
+Either issue affects core functionality, so the patch should not be considered
+correct as-is.
+
+Full review comments:
+
+[P1] Reuse the Celery task id when persisting async pipeline state
+File: tasks.py:44-45
+
+When run_async() returns task.id, callers are told to poll /agent/status/{task_id},
+but run_churn_pipeline() immediately calls run_sync(), which generates a fresh random
+run_id and stores all Redis state under that new key. In the async path this means
+progress and final results are never reachable via the id the API returned, so status
+polling for every Celery-submitted job will report not_found even though the task is
+running or finished.
+
+[P1] Handle ndarray SHAP outputs before converting contributions to floats
+File: agents/tools/shap_tool.py:72-75
+
+With SHAP 0.46+, TreeExplainer.shap_values() for common binary classifiers often
+returns a 3-D ndarray instead of the older list[class][sample] structure. In that
+case raw[0] still has shape (n_features, n_outputs), so the later float(val)
+conversion fails and the explanation agent falls back to its minimal stub for every
+request using those models. This breaks explanations in the normal production case
+of tree-based binary classifiers.
+
+
+--------------------------------------------------------------------
+REVIEW 2: Adversarial Review (review-mnzr3ar4-grfmud)
+Duration: 1m 44s
+Verdict: needs-attention
+--------------------------------------------------------------------
+
+Target: working tree diff
+
+No-ship. The new pipeline can silently score the wrong customer and can also emit
+predictions from a schema-broken feature matrix instead of failing closed; both are
+user-visible, high-cost failure modes.
+
+Findings:
+
+[HIGH] Unknown customer IDs are silently mapped onto a random demo record
+File: agents/data_intelligence_agent.py:177-190
+
+When PostgreSQL does not return a row and CSV fallback is enabled, _fetch_from_csv
+samples an arbitrary row if the requested customer_id is absent. The pipeline then
+continues under the original requested ID, so a real request for customer A can
+receive features, drift checks, vector-store updates, and downstream
+predictions/explanations derived from some unrelated customer B. This is a concrete
+data-integrity failure and can also leak another customer's attributes into
+logs/memory stores.
+
+Recommendation: Fail the request when the requested ID is not present in the
+fallback source. If a demo mode is needed, require an explicit demo-only code path
+and label the substituted record separately instead of reusing the caller-supplied
+customer ID.
+
+[HIGH] Prediction falls back to raw numeric columns after preprocessing failure,
+which can silently mis-score customers
+File: agents/tools/model_tool.py:62-72
+
+If the preprocessing pipeline is missing, stale, or raises during transform, the
+code logs a warning and feeds df.select_dtypes(include="number") directly into the
+model. That fallback does not enforce the trained feature schema or ordering, so
+schema drift can turn into a successful but incorrect prediction instead of a hard
+failure. In the best case this crashes later; in the worst case the feature count
+still matches and the model returns a plausible-looking probability for the wrong
+inputs, which is much harder to detect and rollback.
+
+Recommendation: Remove the raw-numeric fallback for production scoring. Validate
+the incoming schema against the fitted pipeline/model artifacts and abort with a
+structured error when preprocessing cannot be applied exactly.
+
+Next steps:
+- Block release until unknown-customer fallback is changed to fail closed or moved
+  behind an explicit demo-only switch.
+- Block release until model scoring refuses to run without a validated preprocessing
+  path and matching feature schema.
+
+--------------------------------------------------------------------
+REVIEW 3: Adversarial Review (review-mnzulzmt-ha6ro9)
+Duration: ~2m
+Verdict: needs-attention
+--------------------------------------------------------------------
+
+Target: working tree diff
+
+No-ship: this change can score the wrong customer, silently reuse stale customer
+state, and emit authoritative-looking outputs after core explanation or preprocessing
+failures.
+
+Findings:
+
+[CRITICAL] Missing customers are silently replaced with a random demo record
+File: agents/data_intelligence_agent.py:173-190
+
+When the database lookup misses, _fetch_from_csv does not fail closed. It samples an
+arbitrary row from the synthetic CSV and returns that row as the feature set for the
+requested customer_id. The rest of the pipeline then predicts, explains, caches, and
+persists results under the real customer ID even though the underlying data belongs to
+someone else. This is a direct data-integrity failure: a production request for an
+unknown or temporarily unavailable customer can produce a confident churn decision for
+the wrong person, and that bad context is then cached and reused.
+
+Recommendation: Remove the random-row fallback for non-demo execution. If the
+requested customer is not found, abort the run explicitly; only allow synthetic/demo
+substitution behind an explicit demo-mode flag that also rewrites the returned customer
+identity so it cannot be mistaken for the requested account.
+
+[HIGH] Customer context cache serves stale features and history for up to an hour
+with no validation
+File: agents/data_intelligence_agent.py:74-124
+
+run() returns cached customer context before any fresh read from SQL, and the cached
+entry is keyed only by customer_id. There is no version check, timestamp check, or
+invalidation tied to source-row updates, intervention writes, or model changes. Any
+rerun within the TTL will therefore reuse the previous feature row and intervention
+history even if the customer's billing, usage, or support state changed in the
+meantime.
+
+Recommendation: Either remove the short-circuit cache for prediction inputs or include
+freshness/version guards in the cache key and payload (e.g. source update timestamp,
+feature hash, model version). At minimum, revalidate the authoritative source before
+trusting cached context for a decisioning run.
+
+[HIGH] Explanation generation fails open when SHAP breaks
+File: agents/explanation_agent.py:90-152
+
+If SHAP computation returns an error, the agent replaces it with empty contributions
+and still calls the narrative generator. That means the system can emit a
+natural-language explanation with no actual feature-attribution evidence behind it,
+while marking the step as completed and persisting the narrative for later retrieval.
+
+Recommendation: Do not generate or persist a normal explanation when SHAP fails.
+Return an explicit degraded status, surface the error in state/events, and either
+abort the explanation step or emit a clearly labeled fallback message that states
+attribution was unavailable.
+
+[MEDIUM] Prediction falls back to raw numeric columns when preprocessing is missing
+or broken
+File: agents/tools/model_tool.py:62-72
+
+The prediction tool treats preprocessing failure as recoverable by dropping to
+select_dtypes(include="number") and feeding that array directly to the loaded model.
+This is unsafe because the model is loaded independently from the preprocessing
+pipeline and is expected to consume the pipeline's transformed feature space. On a
+pipeline artifact mismatch, the code will either crash later or, worse, produce
+probabilities from a semantically different feature layout with no indication in the
+result that scoring was degraded.
+
+Recommendation: Fail closed if the expected preprocessing pipeline is unavailable or
+transform fails. Add an explicit feature-schema compatibility check before scoring.
+
+Next steps:
+- Remove the random demo-row substitution and force explicit failure for unknown
+  customers outside demo mode.
+- Add cache invalidation/freshness guarantees before reusing customer context for
+  decisioning.
+- Make explanation and prediction paths fail closed when SHAP or preprocessing
+  artifacts are unavailable or incompatible.
+
+====================================================================
+END OF REVIEW
+====================================================================
