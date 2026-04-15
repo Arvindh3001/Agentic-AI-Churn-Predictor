@@ -19,6 +19,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import pickle
 from pathlib import Path
 from typing import Any
 
@@ -177,6 +178,14 @@ def train_all_models(
             "run_id": run_id,
             "model": ensemble,
         }
+
+        # Save local pickle so model_tool can load it without MLflow running
+        artifact_dir = Path("models/artifacts")
+        artifact_dir.mkdir(parents=True, exist_ok=True)
+        ensemble_path = artifact_dir / "stacking_ensemble.pkl"
+        with open(ensemble_path, "wb") as f:
+            pickle.dump(ensemble, f)
+        logger.info("Ensemble saved locally", path=str(ensemble_path))
 
         logger.info(
             "Ensemble trained and logged",

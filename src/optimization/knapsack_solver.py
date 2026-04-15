@@ -36,7 +36,7 @@ class KnapsackSolver:
                        Ignored when falling back to the greedy algorithm.
     """
 
-    def __init__(self, budget_usd: float = 300.0, solver_name: str = "CBC") -> None:
+    def __init__(self, budget_usd: float = 300.0, solver_name: str = "PULP_CBC_CMD") -> None:
         self.budget_usd = budget_usd
         self.solver_name = solver_name
 

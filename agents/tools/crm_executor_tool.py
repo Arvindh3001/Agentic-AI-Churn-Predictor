@@ -135,9 +135,10 @@ def _persist_action(record: dict[str, Any]) -> None:
     try:
         from memory.redis_state import RedisStateManager
         mgr = RedisStateManager()
-        if mgr._redis:
+        redis_client = getattr(mgr, "_redis", None) or getattr(mgr, "_client", None)
+        if redis_client:
             key = f"churn:crm:{record['customer_id']}:actions"
-            mgr._redis.rpush(key, json.dumps(record))
-            mgr._redis.expire(key, 86400 * 90)  # 90-day retention
+            redis_client.rpush(key, json.dumps(record))
+            redis_client.expire(key, 86400 * 90)  # 90-day retention
     except Exception as exc:
         logger.debug("Redis CRM persist skipped", error=str(exc))

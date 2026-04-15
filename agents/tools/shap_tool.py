@@ -50,7 +50,9 @@ def shap_explanation_tool(
     if model is None:
         return {"error": "Model not available for SHAP computation"}
 
-    df = pd.DataFrame([customer_features])
+    _DROP_COLS = {"customer_id", "churn", "churn_label", "churned"}
+    cleaned = {k: v for k, v in customer_features.items() if k not in _DROP_COLS}
+    df = pd.DataFrame([cleaned])
 
     try:
         if pipeline is not None:

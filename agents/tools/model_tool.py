@@ -63,8 +63,11 @@ def churn_prediction_tool(
         logger.error("Preprocessing pipeline not found — refusing to score without it")
         return {"error": "Preprocessing pipeline artifact missing; cannot score safely"}
 
-    # Build DataFrame for pipeline
-    df = pd.DataFrame([customer_features])
+    # Build DataFrame for pipeline — drop non-feature columns that were
+    # never seen during pipeline fit (target label, identifier, etc.)
+    _DROP_COLS = {"customer_id", "churn", "churn_label", "churned"}
+    cleaned = {k: v for k, v in customer_features.items() if k not in _DROP_COLS}
+    df = pd.DataFrame([cleaned])
 
     try:
         X = pipeline.transform(df)
@@ -118,18 +121,21 @@ def _load_model() -> Any | None:
     if "model" in _model_cache:
         return _model_cache["model"]
 
-    # Try MLflow first
-    try:
-        import mlflow.sklearn
-        mlflow.set_tracking_uri(settings.mlflow.mlflow_tracking_uri)
-        model_uri = f"models:/{settings.mlflow.mlflow_model_name}/Production"
-        model = mlflow.sklearn.load_model(model_uri)
-        _model_cache["model"] = model
-        _model_cache["version"] = "production"
-        logger.info("Model loaded from MLflow", uri=model_uri)
-        return model
-    except Exception as exc:
-        logger.warning("MLflow load failed, trying local artifact", error=str(exc))
+    # Try MLflow only if the tracking server is reachable (fast probe, 2 s timeout)
+    if _mlflow_reachable():
+        try:
+            import mlflow.sklearn
+            mlflow.set_tracking_uri(settings.mlflow.mlflow_tracking_uri)
+            model_uri = f"models:/{settings.mlflow.mlflow_model_name}/Production"
+            model = mlflow.sklearn.load_model(model_uri)
+            _model_cache["model"] = model
+            _model_cache["version"] = "production"
+            logger.info("Model loaded from MLflow", uri=model_uri)
+            return model
+        except Exception as exc:
+            logger.warning("MLflow load failed, trying local artifact", error=str(exc))
+    else:
+        logger.debug("MLflow not reachable — skipping, using local artifact")
 
     # Fallback: local pickle
     local_paths = [
@@ -161,6 +167,18 @@ def _load_pipeline() -> Any | None:
         _pipeline_cache["pipeline"] = pipeline
         return pipeline
     return None
+
+
+def _mlflow_reachable(timeout: float = 2.0) -> bool:
+    """Return True only if the MLflow tracking server responds within *timeout* seconds."""
+    import urllib.request
+    import urllib.error
+    try:
+        url = settings.mlflow.mlflow_tracking_uri.rstrip("/") + "/health"
+        req = urllib.request.urlopen(url, timeout=timeout)
+        return req.status == 200
+    except Exception:
+        return False
 
 
 def _classify_risk(prob: float) -> str:

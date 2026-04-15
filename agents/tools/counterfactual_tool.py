@@ -59,6 +59,10 @@ def counterfactual_tool(
     if model is None:
         return {"error": "Model unavailable for counterfactual generation"}
 
+    # Strip non-feature columns before any model/pipeline interaction
+    _DROP_COLS = {"customer_id", "churn", "churn_label", "churned"}
+    customer_features = {k: v for k, v in customer_features.items() if k not in _DROP_COLS}
+
     # Try the full CounterfactualEngine; fall back to rule-based perturbation
     try:
         interventions = _run_engine(model, pipeline, customer_features, current_churn_prob, top_k)
