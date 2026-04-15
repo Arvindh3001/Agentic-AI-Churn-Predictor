@@ -1,0 +1,116 @@
+version: "3.9"
+
+# ============================================================
+# Churn Intelligence Platform — Local Dev Services
+# Usage: docker compose -f docker/docker-compose.yml up -d
+# ============================================================
+
+networks:
+  churn_net:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  redis_data:
+  chromadb_data:
+  mlflow_data:
+
+services:
+
+  # ----------------------------------------------------------
+  # PostgreSQL 16 — Primary relational store
+  # ----------------------------------------------------------
+  postgres:
+    image: postgres:17-alpine
+    container_name: churn_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: churn_user
+      POSTGRES_PASSWORD: churn_pass
+      POSTGRES_DB: churn_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - churn_net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U churn_user -d churn_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ----------------------------------------------------------
+  # Redis 7 — Cache + Celery broker + agent state store
+  # ----------------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    container_name: churn_redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - churn_net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ----------------------------------------------------------
+  # ChromaDB — Vector store for agent memory / RAG
+  # ----------------------------------------------------------
+  chromadb:
+    image: chromadb/chroma:latest
+    container_name: churn_chromadb
+    restart: unless-stopped
+    ports:
+      - "8001:8000"
+    volumes:
+      - chromadb_data:/chroma/chroma
+    environment:
+      - CHROMA_SERVER_HOST=0.0.0.0
+      - CHROMA_SERVER_HTTP_PORT=8000
+      - ANONYMIZED_TELEMETRY=false
+    networks:
+      - churn_net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/heartbeat"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  # ----------------------------------------------------------
+  # MLflow Tracking Server — Experiment tracking + model registry
+  # Backed by PostgreSQL + local artifact store
+  # ----------------------------------------------------------
+  mlflow:
+    image: ghcr.io/mlflow/mlflow:v2.12.1
+    container_name: churn_mlflow
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "5001:5000"
+    volumes:
+      - mlflow_data:/mlflow/artifacts
+    environment:
+      - MLFLOW_BACKEND_STORE_URI=postgresql://churn_user:churn_pass@postgres:5432/churn_db
+      - MLFLOW_DEFAULT_ARTIFACT_ROOT=/mlflow/artifacts
+    command: >
+      mlflow server
+        --backend-store-uri postgresql://churn_user:churn_pass@postgres:5432/churn_db
+        --default-artifact-root /mlflow/artifacts
+        --host 0.0.0.0
+        --port 5000
+    networks:
+      - churn_net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5

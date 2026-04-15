@@ -1,0 +1,90 @@
+# ============================================================
+# Agent Configuration — Churn Intelligence Platform
+# Populated in Phase 3 (Agentic AI Core)
+# ============================================================
+
+orchestrator:
+  name: ChurnOrchestrator
+  description: "Top-level supervisor that routes tasks to specialist agents"
+  llm_provider: openai
+  llm_model: gpt-4o
+  temperature: 0.0
+  max_iterations: 10
+  timeout_seconds: 120
+
+data_intelligence:
+  name: DataIntelligenceAgent
+  description: "Analyses customer feature vectors, detects anomalies, queries feature store"
+  llm_provider: openai
+  llm_model: gpt-4o
+  temperature: 0.0
+  tools:
+    - fetch_customer_features
+    - query_feature_store
+    - detect_anomalies
+
+prediction:
+  name: PredictionAgent
+  description: "Invokes ensemble model, returns churn probability + confidence interval"
+  llm_provider: openai
+  llm_model: gpt-4o
+  temperature: 0.0
+  tools:
+    - run_churn_prediction
+    - get_model_version
+    - compute_conformal_interval
+
+explanation:
+  name: ExplanationAgent
+  description: "Generates SHAP + LIME explanations and LLM-powered narratives"
+  llm_provider: openai
+  llm_model: gpt-4o
+  temperature: 0.3
+  tools:
+    - compute_shap_values
+    - compute_lime_explanation
+    - generate_narrative
+
+counterfactual:
+  name: CounterfactualAgent
+  description: "Generates DiCE counterfactuals and ranks actionable interventions"
+  llm_provider: openai
+  llm_model: gpt-4o
+  temperature: 0.0
+  tools:
+    - generate_counterfactuals
+    - validate_business_constraints
+    - rank_interventions
+
+retention_strategist:
+  name: RetentionStrategistAgent
+  description: "Selects optimal retention bundle using knapsack solver and ROI estimates"
+  llm_provider: openai
+  llm_model: gpt-4o
+  temperature: 0.2
+  tools:
+    - run_knapsack_optimizer
+    - estimate_roi
+    - fetch_available_offers
+
+hitl:
+  name: HITLAgent
+  description: "Handles human-in-the-loop approval gates for high-stakes decisions"
+  llm_provider: openai
+  llm_model: gpt-4o
+  temperature: 0.0
+  tools:
+    - send_slack_approval
+    - wait_for_approval
+    - log_approval_decision
+
+feedback:
+  name: FeedbackAgent
+  description: "Tracks intervention outcomes, detects drift, triggers auto-retraining"
+  llm_provider: openai
+  llm_model: gpt-4o
+  temperature: 0.0
+  tools:
+    - log_outcome
+    - check_drift_status
+    - trigger_retraining
