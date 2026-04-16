@@ -1,0 +1,273 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ------------------------------------------------------------------ */
+/* IBM Carbon Design System — CSS Custom Properties (--cds-* tokens)  */
+/* ------------------------------------------------------------------ */
+
+:root {
+  /* Backgrounds */
+  --cds-background:        #ffffff;
+  --cds-layer-01:          #f4f4f4;
+  --cds-layer-02:          #e0e0e0;
+
+  /* Text */
+  --cds-text-primary:      #161616;
+  --cds-text-secondary:    #525252;
+  --cds-text-placeholder:  #6f6f6f;
+  --cds-text-disabled:     #c6c6c6;
+  --cds-text-on-color:     #ffffff;
+
+  /* Interactive */
+  --cds-interactive:       #0f62fe;
+  --cds-focus:             #0f62fe;
+  --cds-link-primary:      #0f62fe;
+  --cds-link-primary-hover:#0043ce;
+
+  /* Buttons */
+  --cds-button-primary:        #0f62fe;
+  --cds-button-primary-hover:  #0353e9;
+  --cds-button-primary-active: #002d9c;
+  --cds-button-secondary:      #393939;
+  --cds-button-secondary-hover:#4c4c4c;
+
+  /* Borders */
+  --cds-border-subtle:  #c6c6c6;
+  --cds-border-strong:  #8d8d8d;
+
+  /* Support / Status */
+  --cds-support-error:   #da1e28;
+  --cds-support-success: #24a148;
+  --cds-support-warning: #f1c21b;
+  --cds-support-info:    #0f62fe;
+
+  /* Navigation */
+  --cds-nav-bg:     #161616;
+  --cds-nav-height: 48px;
+
+  /* Fields */
+  --cds-field:       #f4f4f4;
+  --cds-field-hover: #e8e8e8;
+}
+
+/* ------------------------------------------------------------------ */
+/* Base resets — Carbon principles                                      */
+/* ------------------------------------------------------------------ */
+
+*, *::before, *::after {
+  box-sizing: border-box;
+}
+
+html {
+  font-size: 16px;
+}
+
+body {
+  background-color: var(--cds-background);
+  color: var(--cds-text-primary);
+  font-family: var(--font-ibm-plex-sans), "Helvetica Neue", Arial, sans-serif;
+  font-weight: 400;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Remove default button styles */
+button { cursor: pointer; }
+
+/* ------------------------------------------------------------------ */
+/* Carbon bottom-border input pattern                                  */
+/* ------------------------------------------------------------------ */
+
+.cds-input {
+  display: block;
+  width: 100%;
+  height: 40px;
+  background-color: var(--cds-field);
+  color: var(--cds-text-primary);
+  padding: 0 16px;
+  border: none;
+  border-bottom: 2px solid transparent;
+  outline: none;
+  font-size: 0.875rem;
+  font-family: inherit;
+  letter-spacing: 0.16px;
+  line-height: 1.29;
+  border-radius: 0;
+  transition: border-color 70ms cubic-bezier(0.2, 0, 0.38, 0.9);
+}
+
+.cds-input:hover {
+  background-color: var(--cds-field-hover);
+}
+
+.cds-input:focus {
+  border-bottom-color: var(--cds-focus);
+  outline: none;
+}
+
+.cds-input::placeholder {
+  color: var(--cds-text-placeholder);
+}
+
+.cds-input.cds-input--error {
+  border-bottom-color: var(--cds-support-error);
+}
+
+textarea.cds-input {
+  height: auto;
+  padding: 11px 16px;
+  resize: none;
+}
+
+select.cds-input {
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 16 16'%3E%3Cpath fill='%23161616' d='M8 11L3 6h10z'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 16px center;
+  padding-right: 40px;
+}
+
+/* ------------------------------------------------------------------ */
+/* Carbon primary button                                                */
+/* ------------------------------------------------------------------ */
+
+.cds-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  height: 48px;
+  padding: 0 63px 0 15px;
+  font-size: 0.875rem;
+  font-family: inherit;
+  font-weight: 400;
+  letter-spacing: 0.16px;
+  border: 1px solid transparent;
+  border-radius: 0;
+  cursor: pointer;
+  transition: background-color 70ms cubic-bezier(0.2, 0, 0.38, 0.9);
+  white-space: nowrap;
+  position: relative;
+}
+
+.cds-btn--primary {
+  background-color: var(--cds-button-primary);
+  color: #ffffff;
+}
+
+.cds-btn--primary:hover:not(:disabled) {
+  background-color: var(--cds-button-primary-hover);
+}
+
+.cds-btn--primary:active {
+  background-color: var(--cds-button-primary-active);
+}
+
+.cds-btn--secondary {
+  background-color: var(--cds-button-secondary);
+  color: #ffffff;
+}
+
+.cds-btn--secondary:hover:not(:disabled) {
+  background-color: var(--cds-button-secondary-hover);
+}
+
+.cds-btn--ghost {
+  background-color: transparent;
+  color: var(--cds-link-primary);
+  border-color: transparent;
+  padding: 0 16px;
+}
+
+.cds-btn--ghost:hover:not(:disabled) {
+  background-color: var(--cds-layer-01);
+}
+
+.cds-btn--tertiary {
+  background-color: transparent;
+  color: var(--cds-button-primary);
+  border-color: var(--cds-button-primary);
+}
+
+.cds-btn--tertiary:hover:not(:disabled) {
+  background-color: var(--cds-button-primary);
+  color: #ffffff;
+}
+
+.cds-btn--danger {
+  background-color: #da1e28;
+  color: #ffffff;
+}
+
+.cds-btn--danger:hover:not(:disabled) {
+  background-color: #b81921;
+}
+
+.cds-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.cds-btn--sm {
+  height: 32px;
+  padding: 0 48px 0 15px;
+  font-size: 0.875rem;
+}
+
+/* ------------------------------------------------------------------ */
+/* Carbon label + helper text                                           */
+/* ------------------------------------------------------------------ */
+
+.cds-label {
+  display: block;
+  color: var(--cds-text-secondary);
+  font-size: 0.75rem;
+  font-weight: 400;
+  line-height: 1.33;
+  letter-spacing: 0.32px;
+  margin-bottom: 8px;
+}
+
+/* ------------------------------------------------------------------ */
+/* Carbon tag (pill — the one rounded exception)                       */
+/* ------------------------------------------------------------------ */
+
+.cds-tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 8px;
+  border-radius: 24px;
+  font-size: 0.75rem;
+  font-weight: 400;
+  line-height: 1.33;
+  letter-spacing: 0.32px;
+  white-space: nowrap;
+}
+
+/* ------------------------------------------------------------------ */
+/* Toast slide-in animation                                             */
+/* ------------------------------------------------------------------ */
+
+@keyframes toast-in {
+  from { opacity: 0; transform: translateX(1rem); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+
+.toast-animate {
+  animation: toast-in 0.2s cubic-bezier(0.2, 0, 0.38, 0.9) forwards;
+}
+
+/* ------------------------------------------------------------------ */
+/* Progress step connector                                              */
+/* ------------------------------------------------------------------ */
+
+.step-connector {
+  position: absolute;
+  left: 11px;
+  top: 24px;
+  width: 2px;
+  height: calc(100% - 4px);
+}

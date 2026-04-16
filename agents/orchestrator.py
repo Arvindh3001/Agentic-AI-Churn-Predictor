@@ -45,6 +45,7 @@ from langgraph.graph import END, StateGraph
 from agents.counterfactual_agent import CounterfactualAgent
 from agents.data_intelligence_agent import DataIntelligenceAgent
 from agents.explanation_agent import ExplanationAgent
+from agents.hitl_agent import HITLAgent
 from agents.prediction_agent import PredictionAgent
 from agents.retention_strategist import RetentionStrategistAgent
 from agents.state import AgentState, initial_state
@@ -70,6 +71,7 @@ NODE_PREDICTION = "prediction"
 NODE_EXPLANATION = "explanation"
 NODE_COUNTERFACTUAL = "counterfactual"
 NODE_RETENTION = "retention_strategist"
+NODE_HITL = "hitl"
 NODE_ABORT = "abort"
 
 
@@ -125,11 +127,12 @@ def build_graph(
     vector_store: VectorStore | None = None,
     llm_provider: str | None = None,
     budget_usd: float = 300.0,
+    hitl_webhook_base_url: str = "http://localhost:8000",
 ) -> Any:
     """
     Construct and compile the LangGraph StateGraph.
 
-    Phase 4 graph topology:
+    Phase 5 graph topology:
 
         [START]
            │
@@ -150,16 +153,20 @@ def build_graph(
         counterfactual
            │
            ▼
-        retention_strategist
+        retention_strategist   ← CRITICAL tier skips CRM dispatch here
            │
+           ▼
+          hitl                 ← gates CRITICAL; notifies HIGH; no-op MEDIUM
+           │                     dispatches CRM for CRITICAL on approval
            ▼
          [END:complete]
 
     Args:
-        redis_store:  Shared Redis state manager.
-        vector_store: Shared ChromaDB vector store.
-        llm_provider: LLM to use for explanation narratives.
-        budget_usd:   Per-customer retention budget for the knapsack solver.
+        redis_store:           Shared Redis state manager.
+        vector_store:          Shared ChromaDB vector store.
+        llm_provider:          LLM to use for explanation narratives.
+        budget_usd:            Per-customer retention budget for knapsack solver.
+        hitl_webhook_base_url: Base URL FastAPI app (used in Slack button callbacks).
 
     Returns:
         Compiled LangGraph app (callable).
@@ -177,6 +184,10 @@ def build_graph(
     )
     cf_agent = CounterfactualAgent(redis_store=_redis)
     ret_agent = RetentionStrategistAgent(redis_store=_redis, budget_usd=budget_usd)
+    hitl_agent = HITLAgent(
+        redis_store=_redis,
+        webhook_base_url=hitl_webhook_base_url,
+    )
 
     # Build graph
     graph = StateGraph(AgentState)
@@ -187,6 +198,7 @@ def build_graph(
     graph.add_node(NODE_EXPLANATION, expl_agent.run)
     graph.add_node(NODE_COUNTERFACTUAL, cf_agent.run)
     graph.add_node(NODE_RETENTION, ret_agent.run)
+    graph.add_node(NODE_HITL, hitl_agent.run)
     graph.add_node("abort", _make_abort_node("pipeline_error"))
     graph.add_node("low_risk_terminal", _low_risk_terminal)
 
@@ -213,10 +225,11 @@ def build_graph(
         },
     )
 
-    # After explanation → counterfactual → retention strategist → done
+    # explanation → counterfactual → retention_strategist → hitl → END
     graph.add_edge(NODE_EXPLANATION, NODE_COUNTERFACTUAL)
     graph.add_edge(NODE_COUNTERFACTUAL, NODE_RETENTION)
-    graph.add_edge(NODE_RETENTION, END)
+    graph.add_edge(NODE_RETENTION, NODE_HITL)
+    graph.add_edge(NODE_HITL, END)
     graph.add_edge("abort", END)
     graph.add_edge("low_risk_terminal", END)
 
@@ -422,6 +435,16 @@ if __name__ == "__main__":
         print(f"\n  Top Risk Factors:")
         for f in e["top_risk_factors"][:3]:
             print(f"    • {f.get('label', f.get('feature'))}: {f.get('shap_value', 0):+.3f}")
+    if result.get("retention_plan"):
+        rp = result["retention_plan"]
+        print(f"\n  Retention Plan:")
+        print(f"    Actions:  {len(rp.get('selected_actions', []))}")
+        print(f"    Cost:     ${rp.get('total_cost_usd', 0):.2f}")
+        print(f"    ROI:      {rp.get('estimated_roi', 0):+.1%}")
+        print(f"    A/B Group:{rp.get('ab_group', 'N/A')}")
+    if result.get("hitl_decision"):
+        hd = result["hitl_decision"]
+        print(f"\n  HITL Decision: {hd['status']} (by {hd['decided_by']})")
     print(f"\n  Steps: {result.get('completed_steps')}")
     print(f"  Errors: {result.get('errors')}")
     print("=" * 60)

@@ -55,8 +55,16 @@ class RetentionPlan(TypedDict):
     estimated_revenue_saved_usd: float
     estimated_roi: float
     ab_group: str                           # "treatment" | "control"
-    crm_action_id: str                      # action_id from CRM executor
+    crm_action_id: str                      # action_id from CRM executor (empty for CRITICAL until HITL approval)
     confidence: float                       # probability the plan reduces churn
+    pending_hitl: bool                      # True when CRITICAL tier — CRM dispatch deferred to HITLAgent
+
+
+class HITLDecision(TypedDict):
+    status: str          # "approved" | "rejected" | "auto_approved"
+    decided_by: str      # "csm" | "slack:<user>" | "system_timeout" | "system_no_slack"
+    decided_at: str      # ISO timestamp
+    notes: str           # free-text reason / audit note
 
 
 class AgentState(TypedDict):
@@ -82,6 +90,9 @@ class AgentState(TypedDict):
 
     # ---- Retention Strategist Agent output (Phase 4) ----
     retention_plan: NotRequired[RetentionPlan]
+
+    # ---- HITL Agent output (Phase 5) ----
+    hitl_decision: NotRequired[HITLDecision]
 
     # ---- Control flow ----
     current_step: str

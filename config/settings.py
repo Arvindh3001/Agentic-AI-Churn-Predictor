@@ -78,6 +78,7 @@ class SlackSettings(BaseSettings):
 
     slack_webhook_url: str = Field(default="")
     slack_channel: str = Field(default="#churn-alerts")
+    slack_signing_secret: str = Field(default="", description="Slack app signing secret for webhook signature verification")
 
 
 class DataSettings(BaseSettings):
@@ -101,6 +102,22 @@ class ModelSettings(BaseSettings):
 
     churn_threshold: float = Field(default=0.5, ge=0.0, le=1.0)
     confidence_interval_alpha: float = Field(default=0.1, ge=0.0, le=1.0)
+
+    # HITL settings (Phase 5)
+    hitl_timeout_seconds: int = Field(
+        default=1800,
+        description="Seconds to wait for CSM approval before auto-approving (30 min default)",
+    )
+    hitl_required_tiers: list[str] = Field(
+        default_factory=lambda: ["CRITICAL"],
+        description="Risk tiers that require human approval before CRM dispatch",
+    )
+
+    # Feedback / retraining trigger
+    feedback_retrain_threshold: int = Field(
+        default=50,
+        description="Number of feedback records needed to trigger model retraining signal",
+    )
 
 
 class AppSettings(BaseSettings):

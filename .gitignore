@@ -69,3 +69,7 @@ reports/explainability/*.png
 # Docker volumes
 postgres_data/
 redis_data/
+
+# Node
+node_modules/
+

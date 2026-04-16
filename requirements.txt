@@ -53,6 +53,11 @@ tiktoken>=0.7
 # ---- Phase 4: Advanced Agents (Optimization) ----
 pulp>=2.8
 
+# ---- Phase 7: Optimization Engine + Fairness Layer ----
+lifelines>=0.29           # Kaplan-Meier + Cox PH survival analysis
+statsmodels>=0.14         # STL seasonal decomposition, time-series stats
+fairlearn>=0.10           # Demographic parity, equalized odds metrics
+
 # ---- Phase 5: HITL + Notifications ----
 slack-sdk>=3.30
 httpx>=0.27

@@ -113,8 +113,13 @@ class RetentionStrategistAgent:
         estimated_roi = round((total_value - total_cost) / max(total_cost, 1.0), 4)
 
         # --- Execute CRM action ------------------------------------------------
+        # CRITICAL tier: defer CRM dispatch to HITLAgent (requires human approval).
+        # All other tiers dispatch immediately.
+        risk_tier = prediction.get("risk_tier", "HIGH")
+        pending_hitl = risk_tier == "CRITICAL"
         crm_action_id = ""
-        if selected:
+
+        if selected and not pending_hitl:
             best_action = selected[0]
             crm_result = crm_executor_tool.invoke({
                 "customer_id": customer_id,
@@ -125,6 +130,12 @@ class RetentionStrategistAgent:
                 "ab_group": ab_group,
             })
             crm_action_id = crm_result.get("action_id", "")
+        elif pending_hitl and selected:
+            logger.info(
+                "CRITICAL tier — CRM dispatch deferred to HITL gate",
+                customer_id=customer_id,
+                n_actions=len(selected),
+            )
 
         # --- Estimate confidence -----------------------------------------------
         churn_prob = prediction.get("churn_probability", 0.5)
@@ -140,6 +151,7 @@ class RetentionStrategistAgent:
             "ab_group": ab_group,
             "crm_action_id": crm_action_id,
             "confidence": confidence,
+            "pending_hitl": pending_hitl,
         }
 
         self._redis.append_stream_event(state["run_id"], {

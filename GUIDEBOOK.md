@@ -19,7 +19,7 @@
 8. [Phase 2 — Explainability Layer](#8-phase-2--explainability-layer)
 9. [Phase 3 — Agentic AI Core](#9-phase-3--agentic-ai-core)
 10. [Phase 4 — Advanced Agents](#10-phase-4--advanced-agents)
-11. [Phase 5 — Human-in-the-Loop (HITL)](#11-phase-5--human-in-the-loop-hitl)
+11. [Phase 5 — Human-in-the-Loop (HITL) + Feedback Loop](#11-phase-5--human-in-the-loop-hitl--feedback-loop-)
 12. [Phase 6 — The Full-Stack Application](#12-phase-6--the-full-stack-application)
 13. [Phase 7 — Optimization & Fairness](#13-phase-7--optimization--fairness)
 14. [Phase 8 — Deployment & Monitoring](#14-phase-8--deployment--monitoring)
@@ -1250,84 +1250,170 @@ src/optimization/
 
 ---
 
-## 11. Phase 5 — Human-in-the-Loop (HITL)
+## 11. Phase 5 — Human-in-the-Loop (HITL) + Feedback Loop ✅
 
-### Why do we need humans in the loop?
+### Why humans stay in the loop
 
-AI systems can be confidently wrong. For high-stakes decisions — spending significant money, contacting important customers, making commitments on behalf of the company — **a human should review and approve**.
+AI systems can be confidently wrong. For high-stakes decisions — spending significant budget,
+contacting important customers, making company commitments — a human should review and approve
+before the action fires.  Phase 5 adds a full HITL gate with Slack notifications, a CSM
+feedback system, an immutable audit trail, and an auto-retraining trigger.
 
-### How HITL works
+### 11.1 — New files
+
+| File | Purpose |
+|---|---|
+| `agents/hitl_agent.py` | LangGraph HITL gate node |
+| `agents/feedback_agent.py` | Records outcomes, triggers retraining |
+| `agents/tools/slack_tool.py` | Slack Block Kit notifications |
+| `app/hitl_webhook.py` | FastAPI router: decision + feedback endpoints |
+| `src/feedback/audit_log.py` | Append-only JSONL audit trail |
+| `src/feedback/__init__.py` | Package init |
+
+### 11.2 — Updated graph topology
 
 ```
-1. RetentionStrategistAgent prepares recommendation packet:
-   ┌────────────────────────────────────────────────────┐
-   │ Customer: C-4821  │  Churn Risk: 87%  │  LTV: $3,420
-   │ Recommended Action: Assign dedicated CSM
-   │ Estimated Cost: $120
-   │ Projected Revenue Saved: $820
-   │ ROI: 583%
-   │ Supporting Evidence: [SHAP waterfall] [LIME chart]
-   │ Similar customers retained: 74%
-   └────────────────────────────────────────────────────┘
-
-2. HITLAgent sends this to Slack:
-   @sarah.jones — Customer C-4821 needs your attention!
-   High churn risk: 87% | Recommended: CSM assignment ($120)
-   Expected to save: $820 | Similar cases: 74% success rate
-   [✅ Approve] [❌ Reject] [📝 Modify]
-
-3. Account manager reviews the full context on the web dashboard
-
-4. Manager clicks "Approve"
-
-5. HITLAgent receives approval signal
-
-6. FeedbackAgent logs: customer_id, action, approver, timestamp, reasoning
-
-7. System schedules 30-day outcome check:
-   "On [date + 30 days], check if C-4821 renewed"
+[START]
+   │
+   ▼
+data_intelligence
+   │
+   ▼
+prediction ──(LOW)──► low_risk_terminal ──► [END]
+   │
+   └─(MEDIUM/HIGH/CRITICAL)─►
+   │
+   ▼
+explanation
+   │
+   ▼
+counterfactual
+   │
+   ▼
+retention_strategist        ← CRITICAL tier: selects actions but SKIPS CRM dispatch
+   │                          HIGH/MEDIUM: dispatches CRM immediately
+   ▼
+hitl                        ← CRITICAL: blocks, waits for Slack approve/reject
+   │                          HIGH: sends Slack alert, auto-approves
+   │                          MEDIUM: silent auto-approve
+   ▼
+[END:complete]
 ```
 
-### Auto-approval rules
+### 11.3 — HITL Agent behaviour by risk tier
 
-Not every decision needs a human. The system auto-approves:
-- Churn probability < 50% (low risk)
-- Intervention cost < $20
-- Standard email outreach actions
+**CRITICAL (≥ 85% churn probability)**
+1. `RetentionStrategistAgent` selects optimal actions via knapsack solver but sets `pending_hitl=True` — CRM is **not** dispatched yet
+2. `HITLAgent` sends a Slack Block Kit message with customer details, top risk factors, recommended actions, estimated cost and ROI
+3. Two buttons: **Approve** and **Reject** — both POST to `POST /hitl/decision` with the `run_id`
+4. The agent polls Redis (`churn:hitl:{run_id}:decision`) at 2-second intervals for up to `hitl_timeout_seconds` (default: 30 min)
+5. On **approval** → dispatches the CRM action and logs to audit trail
+6. On **rejection** → skips CRM dispatch and logs rejection reason
+7. On **timeout** → auto-approves with a warning log (configurable)
 
-This keeps humans focused on genuinely high-stakes decisions.
+**HIGH (70–84%)**
+1. `RetentionStrategistAgent` dispatches CRM immediately (no gate)
+2. `HITLAgent` sends an informational Slack alert (no buttons) and auto-approves
+
+**MEDIUM / LOW**
+- MEDIUM passes through HITL silently (auto-approved, no notification)
+- LOW never reaches HITL (routed to `low_risk_terminal` before explanation)
+
+### 11.4 — Slack Block Kit message structure
+
+```
+┌─────────────────────────────────────────────────────────┐
+│ 🚨 HITL Review Required — CRITICAL Churn Risk           │
+├────────────────┬────────────────┬──────────┬────────────┤
+│ Customer ID    │ Churn Prob     │ Risk Tier│ A/B Group  │
+│ a97c0bd3...    │ 91%            │ CRITICAL │ treatment  │
+├────────────────┴────────────────┴──────────┴────────────┤
+│ Est. Cost: $120.00              Est. ROI: +4.2x         │
+├─────────────────────────────────────────────────────────┤
+│ Top Risk Factors                                        │
+│   • Monthly Charges: +0.312                             │
+│   • Feature Adoption Rate: +0.241                       │
+│   • Support Tickets (30d): +0.198                       │
+├─────────────────────────────────────────────────────────┤
+│ Recommended Actions                                     │
+│   • Assign dedicated onboarding / CSM support ($120)    │
+│   • Proactive support outreach ($60)                    │
+├─────────────────────────────────────────────────────────┤
+│  [  Approve  ]          [  Reject  ]                    │
+├─────────────────────────────────────────────────────────┤
+│ Run ID: `abc12345` | Auto-approves after 30 min         │
+└─────────────────────────────────────────────────────────┘
+```
+
+Falls back to structured console logging (`[SLACK-FALLBACK]`) when no
+`SLACK_WEBHOOK_URL` is set — dev/CI mode works without a real Slack workspace.
+
+### 11.5 — FastAPI HITL Webhook (`app/hitl_webhook.py`)
+
+| Route | Method | Purpose |
+|---|---|---|
+| `/hitl/decision` | POST | CSM approve/reject (direct API call) |
+| `/hitl/slack/interactive` | POST | Slack button callback (verified via HMAC-SHA256) |
+| `/hitl/feedback` | POST | Record CSM outcome: retained / churned / unknown |
+| `/hitl/status/{run_id}` | GET | Poll current HITL decision for a run |
+| `/hitl/feedback/stats` | GET | Feedback count vs retraining threshold |
+| `/hitl/audit` | GET | Last N audit log entries |
+
+### 11.6 — Feedback Agent & Retraining Trigger
+
+After a retention intervention has had time to take effect, a CSM submits the outcome:
+
+```
+POST /hitl/feedback
+{
+  "run_id": "abc12345",
+  "customer_id": "a97c0bd3-...",
+  "outcome": "retained",            # or "churned" / "unknown"
+  "notes": "Renewed 12-month contract after CSM call",
+  "submitted_by": "sarah.jones@company.com",
+  "ab_group": "treatment"
+}
+```
+
+`FeedbackAgent` then:
+1. Persists the record to Redis with a 90-day TTL (`churn:feedback:{run_id}:{customer_id}`)
+2. Updates the ChromaDB interaction record with the actual outcome
+3. Logs the A/B experiment outcome (`ABTestingManager.log_outcome`)
+4. Writes an audit log entry
+5. Increments the global feedback counter (`churn:feedback:total_count`)
+6. If counter ≥ `feedback_retrain_threshold` (default 50): fires a retraining signal
+   to Redis (`churn:retrain:trigger`) and resets the counter
+
+Phase 8 will wire the retraining signal to a Celery task that runs the full training pipeline.
+
+### 11.7 — Audit Log (`src/feedback/audit_log.py`)
+
+Every significant system event is recorded as a single JSON line in `logs/audit.jsonl`:
+
+```jsonl
+{"event":"hitl_decision","run_id":"abc12345","customer_id":"a97c0bd3-...","risk_tier":"CRITICAL","churn_prob":0.91,"status":"approved","decided_by":"slack:sarah.jones","slack_sent":true,"timestamp":"2026-04-16T10:23:45Z"}
+{"event":"crm_action","action_id":"crm-b57dcc4a","customer_id":"a97c0bd3-...","action_type":"csm_assignment","status":"scheduled","ab_group":"treatment","cost_usd":120.0,"timestamp":"2026-04-16T10:23:46Z"}
+{"event":"feedback_recorded","feedback_id":"fb-abc12345-1745...","run_id":"abc12345","customer_id":"a97c0bd3-...","outcome":"retained","submitted_by":"sarah.jones@company.com","timestamp":"2026-05-16T14:00:00Z"}
+```
+
+The file is append-only — entries are never modified or deleted. `AuditLog.read_recent(n=50)` returns the tail of the file for the `/hitl/audit` endpoint.
+
+### 11.8 — Configuration
+
+New settings in `config/settings.py`:
+
+| Setting | Default | Description |
+|---|---|---|
+| `SLACK_WEBHOOK_URL` | `""` | Slack incoming webhook URL |
+| `SLACK_SIGNING_SECRET` | `""` | App signing secret for webhook signature verification |
+| `HITL_TIMEOUT_SECONDS` | `1800` | Seconds before auto-approval (30 min) |
+| `FEEDBACK_RETRAIN_THRESHOLD` | `50` | Feedback records needed to trigger retraining |
 
 ---
 
-### Feedback Loop & Auto-Retraining
+## 12. Phase 6 — The Full-Stack Application ✅
 
-The feedback agent tracks outcomes:
-
-```
-90 days after intervention:
-
-Customer C-4821: Renewed ✓  → Label: intervention WORKED
-Customer C-7193: Churned ✗  → Label: intervention FAILED
-
-These outcomes are added to the training dataset.
-
-Every month:
-  - Run drift detection on incoming data
-  - Calculate model performance on recent predictions
-  
-IF drift_detected OR recent_AUC < baseline_AUC - 0.03:
-  → Trigger automatic retraining pipeline
-  → Train new model on updated dataset (including outcomes)
-  → Run evaluation
-  → If new model is better → promote to Staging
-  → Alert team for validation
-```
-
-This creates a **self-improving system** that gets smarter with every intervention.
-
----
-
-## 12. Phase 6 — The Full-Stack Application
+Phase 6 wraps the entire AI pipeline in a production web application: a FastAPI backend serving REST + WebSocket APIs, and a Next.js 14 frontend that business users interact with in real time.
 
 ### 12.1 FastAPI Backend
 
@@ -1338,20 +1424,32 @@ FastAPI is a Python web framework for building APIs — the communication layer 
 ```
 User clicks "Analyse Customer" on website
          ↓
-HTTP POST /api/v1/customers/C-4821/analyse
+HTTP POST /api/v1/agent/analyse
          ↓
-FastAPI receives the request
+FastAPI validates JWT Bearer token
          ↓
-Validates JWT authentication token
+Dispatches ChurnOrchestrator as Celery async task
          ↓
-Checks user's role (viewer? analyst? admin?)
+Returns run_id immediately
          ↓
-Triggers LangGraph agent workflow
+Frontend opens WebSocket /ws/agent/{run_id}
          ↓
-Returns results as JSON
+Server streams step events as they complete
+         ↓
+Final payload (prediction + explanation + plan) delivered
 ```
 
-#### Key FastAPI features used
+#### Backend files
+
+| File | Purpose |
+|---|---|
+| `app/main.py` | FastAPI app with lifespan model pre-warm, CORS, GZip |
+| `app/middleware/auth.py` | JWT Bearer validation, `CurrentUser` dependency |
+| `app/routers/auth.py` | `POST /auth/token` — OAuth2 login, demo users |
+| `app/routers/customers.py` | Customer list, high-risk watchlist, single customer |
+| `app/routers/agent.py` | Trigger analysis, poll status, batch endpoint |
+| `app/websockets/agent_stream.py` | `GET /ws/agent/{run_id}` — live step streaming |
+| `app/hitl_webhook.py` | HITL decision, Slack callback, feedback, audit |
 
 **JWT Authentication**
 ```
@@ -1360,156 +1458,258 @@ User logs in → server creates signed token → user sends token with every req
 Server validates token signature → if valid, processes request
 
 Structure: [Header].[Payload].[Signature]
-Payload contains: user_id, role, expiry_timestamp
-```
+Payload contains: username, role, expiry_timestamp
 
-**RBAC (Role-Based Access Control)**
-```
-Viewer:  Can see dashboards and predictions only
-Analyst: Can run analyses and view explanations
-Manager: Can approve/reject HITL decisions
-Admin:   Can retrain models, manage users, see all data
+Demo credentials:
+  admin / admin123   → role: admin
+  analyst / analyst123 → role: analyst
 ```
 
 **WebSocket Streaming**
 ```
-Normal HTTP: Request → Wait → Full Response
-WebSocket:   Connection stays open → Server pushes updates in real-time
+Normal HTTP: Request → Wait → Full Response (frozen spinner for 30s)
+WebSocket:   Connection open → server pushes updates in real-time
 
-When an agent analysis takes 30 seconds, WebSocket streams each step:
-"Step 1/7: Fetching customer features..."
-"Step 2/7: Running prediction model..."
-"Step 3/7: Computing SHAP explanations..."
-...
-"Analysis complete!"
-
-This creates a real-time experience rather than a frozen loading spinner.
+Event types streamed:
+  { step: "prediction",   status: "running" }
+  { step: "prediction",   status: "completed" }
+  { step: "explanation",  status: "running" }
+  ...
+  { step: "final", status: "final",
+    prediction: {...}, explanation: {...},
+    retention_plan: {...}, hitl_decision: {...} }
 ```
 
-**Celery + Redis Task Queue**
+**API endpoints summary**
 ```
-Some operations are too slow for real-time HTTP (model retraining can take hours).
+POST /auth/token                       Log in, receive JWT
+GET  /auth/verify                      Validate token
 
-User requests batch retraining → 
-FastAPI adds task to Redis queue → 
-Celery worker picks up task → 
-Runs retraining in background → 
-Notifies user when done via WebSocket
+GET  /api/v1/customers                 List all customers (paginated)
+GET  /api/v1/customers/high-risk       Top churned by monthly charges
+GET  /api/v1/customers/{id}            Single customer + last analysis
+
+POST /api/v1/agent/analyse             Start pipeline (async Celery)
+GET  /api/v1/agent/status/{run_id}     Poll pipeline status
+POST /api/v1/agent/batch               Batch analysis (max 100)
+GET  /api/v1/agent/batch/{task_id}     Poll batch progress
+
+WS   /ws/agent/{run_id}                Live step event stream
+
+POST /hitl/decision                    CSM approve/reject
+POST /hitl/slack/interactive           Slack button callback
+POST /hitl/feedback                    Record outcome
+GET  /hitl/audit                       Audit log (last N entries)
+GET  /hitl/feedback/stats              Feedback counts + A/B breakdown
+GET  /health                           Health check
 ```
 
 ---
 
-### 12.2 Next.js Frontend
+### 12.2 Next.js 14 Frontend
 
 **What is Next.js?**
 
 Next.js is a React framework for building web applications. It powers the dashboard that business users interact with.
 
-#### The Dashboard Pages
+#### Frontend architecture
 
-**Main Dashboard**
 ```
-┌─────────────────────────────────────────────────────┐
-│  🔴 127 High Risk Customers    📊 Churn Rate: 8.3%  │
-│  🟡  89 Medium Risk           📈 Trend: ↑ 0.4%      │
-│  🟢 784 Low Risk              💰 Revenue at Risk: $42K│
-├─────────────────────────────────────────────────────┤
-│  Top 10 At-Risk Customers                           │
-│  ┌──────────┬────────┬──────────┬────────────────┐  │
-│  │ Customer │ Risk % │ Segment  │ Recommendation │  │
-│  ├──────────┼────────┼──────────┼────────────────┤  │
-│  │ C-4821   │  87%   │ Premium  │ Assign CSM     │  │
-│  │ C-3377   │  83%   │ Basic    │ Price discount  │  │
-│  │ ...      │  ...   │ ...      │ ...            │  │
-│  └──────────┴────────┴──────────┴────────────────┘  │
-└─────────────────────────────────────────────────────┘
-```
-
-**Customer Detail Page**
-- Full SHAP waterfall chart
-- LIME bar chart
-- Churn probability timeline (historical trend)
-- Recommended interventions with costs and ROI
-
-**What-If Simulator**
-```
-Drag sliders to simulate:
-  Feature Adoption Rate: [====|==========]  0.4 → 0.7
-  Monthly Charges:       [========|======] $95 → $75
-  Contract Type:         [Month-to-Month] → [One Year]
-
-Real-time prediction update:
-  Churn probability: 87% → 34%
+frontend/
+├── src/
+│   ├── app/                          App Router (Next.js 14)
+│   │   ├── layout.tsx                Root layout + AppShell
+│   │   ├── page.tsx                  Dashboard — high-risk watchlist
+│   │   ├── login/page.tsx            JWT login form
+│   │   ├── customers/[id]/page.tsx   Customer detail + live pipeline
+│   │   └── hitl/page.tsx             HITL audit log + feedback stats
+│   ├── components/
+│   │   ├── AppShell.tsx              Conditional nav (hides on /login)
+│   │   ├── Navbar.tsx                Dark sidebar with route links
+│   │   ├── PipelineStream.tsx        WebSocket step progress + results
+│   │   ├── RetentionPlanCard.tsx     Cost / ROI / actions display
+│   │   └── RiskBadge.tsx             Color-coded CRITICAL/HIGH/MEDIUM/LOW
+│   ├── lib/
+│   │   └── api.ts                    Typed API client (all endpoints)
+│   └── types/
+│       └── index.ts                  Shared TypeScript interfaces
 ```
 
-**HITL Approval Queue**
-```
-Pending approvals for your team:
+#### The pages
 
-┌───────────────────────────────────────────────────┐
-│ C-4821 │ CSM Assignment │ Cost: $120 │ ROI: 583%  │
-│ [View Details] [Approve ✓] [Reject ✗] [Modify ✏]  │
-└───────────────────────────────────────────────────┘
-```
+**Login (`/login`)**
+- JWT form: username + password → `POST /auth/token`
+- Stores token in `localStorage`, redirects to dashboard
+- Demo credentials shown for portfolio demo use
+
+**Dashboard (`/`)**
+- Fetches top 20 high-risk customers via `GET /api/v1/customers/high-risk`
+- KPI strip: watched count, feedback collected, retention rate
+- Table with risk tier badge — click any row → `/customers/{id}`
+
+**Customer Analysis (`/customers/{id}`)**
+- Shows customer profile card (monthly charges, support tickets, NPS, adoption)
+- "Run Churn Analysis" button → `POST /api/v1/agent/analyse` → opens WebSocket
+- `PipelineStream` renders live step progress for all 6 pipeline stages:
+  Data Intelligence → Prediction → SHAP Explanation →
+  Counterfactual → Retention Strategy → HITL Review
+- Final results appear inline: probability bar, narrative, SHAP factors, plan
+- HITL quick-action panel for CRITICAL customers (Approve / Reject buttons)
+- Outcome feedback form (Retained / Churned / Unknown) after analysis completes
+
+**HITL Queue (`/hitl`)**
+- Feedback statistics: total, retained, churned, unknown counts
+- A/B group breakdown (control vs treatment)
+- Append-only audit log table: colour-coded event types, run IDs, timestamps
+
+#### Key frontend patterns
+
+**Auth guard** — every protected page checks `getToken()` on mount; redirects to `/login` if missing; `api.ts` auto-redirects on any 401 response.
+
+**Optimistic streaming** — `PipelineStream` opens a WebSocket immediately after `run_id` is received; no polling required; all step state held locally in `useState`.
+
+**Tailwind CSS** — utility-first styling with no external UI library; consistent slate/indigo colour palette throughout.
 
 ---
 
-## 13. Phase 7 — Optimization & Fairness
+## 13. Phase 7 — Optimization Engine + Fairness Layer ✅
 
-### 13.1 Knapsack Budget Optimizer
+Phase 7 adds four advanced analytical capabilities: a portfolio-level budget optimizer, temporal survival analysis, a fairness/bias detection framework, and model robustness testing. These are exposed through new API endpoints and two new frontend pages (Optimizer and Model Intel).
 
-**File:** `src/optimization/`
+### 13.1 Retention Budget Optimizer
+
+**Files:** `src/optimization/knapsack_solver.py`, `app/routers/analytics.py`, `frontend/src/app/optimization/page.tsx`
 
 #### The business problem
 
-You have a $10,000 monthly retention budget and 500 at-risk customers. You can't afford to intervene on all of them. Which customers should you prioritise to maximise retained revenue?
+You have a $50,000 quarterly retention budget and 800 at-risk customers. You can't afford to intervene on all of them. Which customers get which actions to maximise retained revenue?
 
-This is the classic **0/1 Knapsack Problem** from computer science:
+This is the classic **0/1 Knapsack Problem**:
 
 ```
-Knapsack = Budget ($10,000)
-Items    = Retention actions for each customer
+Knapsack = Total Budget
+Items    = (Customer × Action) pairs
 Weight   = Cost of each action
-Value    = Expected revenue saved = monthly_charges × P(retention | action)
+Value    = Expected revenue saved = CLV × prob_reduction
 
-Goal: Select which interventions to fund to maximise total value
-      without exceeding the budget.
+Goal: Assign actions to customers to maximise total expected
+      revenue retained without exceeding the budget.
 ```
 
-**Example:**
+**Example output:**
 ```
-Customer C-4821: CSM ($120) → saves $820  | Ratio: 6.8x
-Customer C-7193: Discount ($45) → saves $180  | Ratio: 4.0x
-Customer C-2891: Email ($5) → saves $15   | Ratio: 3.0x
+Customer C-4821: dedicated_csm ($150) → −20% churn → $1,840 saved  ROI: 12×
+Customer C-7193: discount_10pct ($20)  → −8% churn  → $380 saved   ROI: 19×
 ...
-
-Knapsack solution: Fund C-4821 (120) + 78 others = $9,980 spent
-Expected revenue retained: $142,000
+Total: $48,920 spent → $142,000 expected revenue retained  ROI: 2.9×
 ```
 
-This is solved using **PuLP** (Python linear programming library), which finds the mathematically optimal allocation.
+Solved using **PuLP** integer programming (falls back to greedy sort if solver unavailable). The frontend Optimizer page lets you set the budget slider, max actions per customer, and risk tier filter interactively.
 
-### 13.2 Fairness Analysis
+### 13.2 Temporal & Survival Analysis
 
-**Why does fairness matter in churn prediction?**
+**Files:** `src/temporal/survival_analysis.py`, `src/temporal/seasonality.py`, `src/temporal/cohort_analysis.py`
 
-If your model was trained on biased data, it might systematically underserve certain customer groups:
+#### Kaplan-Meier survival curves
+
+KM curves answer: "Of 1,000 customers acquired in January, how many are still active after N months?"
+
+```python
+kmf = KaplanMeierFitter()
+kmf.fit(tenure_months, event_observed=churned)
+# median_survival_time_ = 34 months (half of customers have churned by month 34)
+```
+
+Survival curves can be stratified by `contract_type`, `plan_tier`, etc. to reveal which segments are most at risk over time.
+
+#### Cox Proportional Hazards
+
+The Cox PH model quantifies *which features most accelerate churn*:
 
 ```
-Scenario (hypothetical bad outcome):
-  - Model's churn predictions for Enterprise customers: AUC = 0.93 (excellent)
-  - Model's churn predictions for SMB customers:       AUC = 0.71 (poor)
+Hazard Ratio > 1 = this feature INCREASES churn rate
+Hazard Ratio < 1 = this feature DECREASES churn rate
+
+monthly_charges:  HR = 1.42 (p<0.001) → higher charges → faster churn
+nps_score:        HR = 0.71 (p<0.001) → higher NPS → slower churn
+num_support_tickets: HR = 1.28 (p=0.003) → more tickets → faster churn
+```
+
+#### Seasonality decomposition (STL)
+
+Uses statsmodels STL to decompose the monthly churn-rate time-series into:
+- **Trend** — long-term direction (churn going up or down?)
+- **Seasonal** — month-of-year patterns (does churn spike in Q1 budget cycles?)
+- **Residual** — unexplained noise
+
+#### Cohort retention heatmap
+
+Groups customers by acquisition month, then tracks the % still active at each subsequent month. Displayed as a colour-coded heatmap: green = high retention, red = high churn. Reveals product/onboarding improvements or degradations over cohorts.
+
+### 13.3 Fairness & Bias Detection
+
+**Files:** `src/fairness/bias_detector.py`, `src/fairness/fairness_report.py`
+
+#### Why fairness matters in churn prediction
+
+If the model was trained on biased historical data, it may systematically under-predict churn for certain customer segments, causing the retention team to overlook them:
+
+```
+Bad outcome example:
+  Predicted churn rate: Enterprise = 18%, SMB = 12%
+  Actual churn rate:    Enterprise = 17%, SMB = 22%
   
-  Result: Enterprise customers get good predictions and effective interventions.
-          SMB customers get poor predictions — you miss their churn signals.
-          
-  Business impact: SMB segment churns at higher rate, unfairly disadvantaged.
+  → The model underestimates SMB churn by 10pp
+  → SMB customers who should get retention calls don't get them
+  → They churn → lost revenue + unfair treatment
 ```
 
-The fairness module measures:
-- **Demographic parity**: Does the model predict churn at similar rates across segments?
-- **Equal opportunity**: Does the model have equal true positive rates across segments?
-- **Calibration fairness**: Are probabilities equally well-calibrated across groups?
+#### Three fairness metrics
+
+| Metric | What it measures | Threshold |
+|---|---|---|
+| **Demographic Parity Difference** | Max difference in *predicted positive rate* across groups | < 0.10 |
+| **Equalized Odds Difference** | Max difference in *true positive rate* across groups (requires labels) | < 0.10 |
+| **Disparate Impact Ratio** | min_group_rate / max_group_rate (EEOC 4/5ths rule) | > 0.80 |
+
+The fairness report is available as JSON (API) or HTML (browser), with per-segment breakdown and clear PASS/FAIL per attribute.
+
+### 13.4 Model Robustness Testing
+
+**File:** `src/robustness/robustness_tester.py`
+
+Four tests run against the deployed model:
+
+| Test | Method | Pass threshold |
+|---|---|---|
+| **Prediction stability** | Add Gaussian noise to features; measure Spearman rank correlation between original and noisy predictions | ≥ 0.85 |
+| **Feature perturbation sensitivity** | Shift each feature by ±10% of its std; measure mean absolute prob change | (reported, no threshold) |
+| **Adversarial stress** | 2σ targeted perturbation in worst-case direction; report max shift | ≤ 0.20 |
+| **Calibration ECE** | Expected Calibration Error across 10 probability bins | ≤ 0.10 |
+
+A high overall robustness score (> 75%) means the model's predictions are trustworthy and consistent — not erratic near decision boundaries.
+
+### 13.5 New API Endpoints
+
+| Endpoint | Description |
+|---|---|
+| `GET /api/v1/analytics/survival` | KM curves + Cox PH hazard ratios |
+| `GET /api/v1/analytics/cohort` | Monthly cohort retention matrix |
+| `GET /api/v1/analytics/seasonality` | STL decomposition of churn time-series |
+| `GET /api/v1/analytics/fairness` | JSON bias report for protected attributes |
+| `GET /api/v1/analytics/fairness/report` | HTML fairness report |
+| `GET /api/v1/analytics/robustness` | Robustness + calibration report |
+| `POST /api/v1/analytics/optimize` | Portfolio budget optimizer |
+
+### 13.6 New Frontend Pages
+
+**Optimizer page** (`/optimization`): Budget slider + risk tier filter + max actions toggle → run knapsack optimizer → results table showing customer/action/cost/churn-reduction/expected-revenue-saved with KPI tiles for total ROI.
+
+**Model Intelligence page** (`/models`): Four-tab interface:
+- **Fairness** — per-attribute bias checks with segment breakdown
+- **Robustness** — stability score, feature sensitivity bars, calibration table
+- **Survival Analysis** — KM table, Cox PH hazard ratios, 12-month churn projection bar chart
+- **Cohort Retention** — colour-coded heatmap + period churn rate bar chart
 
 ---
 
