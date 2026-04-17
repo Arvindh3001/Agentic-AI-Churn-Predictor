@@ -1,0 +1,63 @@
+# ============================================================
+# Prometheus Scrape Configuration
+# Churn Intelligence Platform
+# ============================================================
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    service: churn-intelligence-platform
+    env: local
+
+# ── Alert rules ───────────────────────────────────────────────
+rule_files:
+  - "alert_rules.yml"
+
+# ── Alertmanager (optional) ───────────────────────────────────
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: []
+
+# ── Scrape jobs ───────────────────────────────────────────────
+scrape_configs:
+
+  # Prometheus self-monitoring
+  - job_name: prometheus
+    static_configs:
+      - targets: [localhost:9090]
+
+  # FastAPI backend — custom metrics at /metrics
+  - job_name: churn-api
+    metrics_path: /metrics
+    static_configs:
+      - targets: [api:8000]
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+        replacement: churn-api
+
+  # Redis exporter (if redis_exporter sidecar is deployed)
+  - job_name: redis
+    static_configs:
+      - targets: [redis:9121]
+    scrape_interval: 30s
+
+  # PostgreSQL exporter
+  - job_name: postgres
+    static_configs:
+      - targets: [postgres:9187]
+    scrape_interval: 30s
+
+  # Node / container metrics (if node-exporter is deployed)
+  - job_name: node-exporter
+    static_configs:
+      - targets: [node-exporter:9100]
+    scrape_interval: 30s
+
+  # cAdvisor — container resource usage
+  - job_name: cadvisor
+    static_configs:
+      - targets: [cadvisor:8080]
+    scrape_interval: 30s

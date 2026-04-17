@@ -1,0 +1,42 @@
+# ============================================================
+# Churn Intelligence Platform — Celery Worker
+# Shares the same code/deps as the API image but runs Celery
+# ============================================================
+FROM python:3.12-slim AS builder
+
+WORKDIR /build
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    libpq-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt .
+RUN pip install --upgrade pip && \
+    pip install --prefix=/install --no-cache-dir -r requirements.txt
+
+# ============================================================
+FROM python:3.12-slim AS runtime
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libpq5 \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN groupadd -r churn && useradd -r -g churn churn
+
+COPY --from=builder /install /usr/local
+COPY --chown=churn:churn . .
+
+RUN mkdir -p logs mlruns models/artifacts && \
+    chown -R churn:churn logs mlruns models
+
+USER churn
+
+# Celery worker: concurrency=4, loglevel=info, queues=default+batch
+CMD ["celery", "-A", "celery_app", "worker", \
+     "--loglevel=info", \
+     "--concurrency=4", \
+     "--queues=default,batch", \
+     "--hostname=worker@%h"]

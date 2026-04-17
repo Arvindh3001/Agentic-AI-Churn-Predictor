@@ -28,6 +28,14 @@ Endpoints summary:
     GET   /hitl/feedback/stats           → feedback / retrain stats
     GET   /hitl/audit                    → recent audit log
     GET   /health                        → service health check
+    GET   /metrics                       → Prometheus metrics scrape endpoint
+    GET   /api/v1/analytics/survival     → Kaplan-Meier + Cox PH
+    GET   /api/v1/analytics/cohort       → cohort retention matrix
+    GET   /api/v1/analytics/fairness     → bias report
+    GET   /api/v1/analytics/robustness   → model robustness report
+    POST  /api/v1/analytics/optimize     → portfolio budget optimizer
+    GET   /api/v1/gdpr/export/{id}       → GDPR data export
+    DELETE /api/v1/gdpr/delete/{id}      → GDPR soft-delete
 """
 
 from __future__ import annotations
@@ -41,7 +49,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 
 from app.hitl_webhook import router as hitl_router
-from app.routers import agent, auth, customers, analytics
+from app.routers import agent, auth, customers, analytics, gdpr
 from app.websockets.agent_stream import router as ws_router
 from app.websockets.customer_broadcast import router as customer_ws_router
 from config.settings import settings
@@ -112,9 +120,18 @@ app.include_router(auth.router)
 app.include_router(customers.router)
 app.include_router(agent.router)
 app.include_router(analytics.router)
+app.include_router(gdpr.router)
 app.include_router(hitl_router)
 app.include_router(ws_router)
 app.include_router(customer_ws_router)
+
+# ── Prometheus metrics (/metrics endpoint + HTTP middleware) ────
+try:
+    from monitoring.prometheus_metrics import setup_metrics
+    setup_metrics(app)
+    logger.info("Prometheus metrics enabled at /metrics")
+except ImportError:
+    logger.warning("prometheus_client not installed — /metrics disabled")
 
 
 # ---- System endpoints -------------------------------------------------

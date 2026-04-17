@@ -1,0 +1,178 @@
+name: Deploy — Build · Push · Staging · Production
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Target environment"
+        required: true
+        default: staging
+        type: choice
+        options: [staging, production]
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_BASE: ${{ github.repository }}
+
+jobs:
+  # ── Build and push images ─────────────────────────────────
+  build-push:
+    name: Build & push images to GHCR
+    runs-on: ubuntu-latest
+    outputs:
+      image_tag: ${{ steps.meta.outputs.version }}
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_BASE }}
+          tags: |
+            type=sha,prefix=sha-
+            type=ref,event=branch
+            type=semver,pattern={{version}}
+
+      - name: Build and push API
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: docker/Dockerfile.api
+          push: true
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_BASE }}/churn-api:${{ steps.meta.outputs.version }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build and push Worker
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: docker/Dockerfile.worker
+          push: true
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_BASE }}/churn-worker:${{ steps.meta.outputs.version }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build and push Frontend
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: docker/Dockerfile.frontend
+          push: true
+          build-args: |
+            NEXT_PUBLIC_API_URL=${{ secrets.PROD_API_URL }}
+            NEXT_PUBLIC_WS_URL=${{ secrets.PROD_WS_URL }}
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_BASE }}/churn-frontend:${{ steps.meta.outputs.version }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # ── Deploy to staging ─────────────────────────────────────
+  deploy-staging:
+    name: Deploy to staging
+    runs-on: ubuntu-latest
+    needs: build-push
+    environment:
+      name: staging
+      url: ${{ secrets.STAGING_URL }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@v3
+
+      - name: Configure kubeconfig
+        run: |
+          mkdir -p ~/.kube
+          echo "${{ secrets.STAGING_KUBECONFIG }}" | base64 -d > ~/.kube/config
+          chmod 600 ~/.kube/config
+
+      - name: Update image tags in manifests
+        run: |
+          IMAGE_TAG=${{ needs.build-push.outputs.image_tag }}
+          sed -i "s|churn-api:latest|${{ env.REGISTRY }}/${{ env.IMAGE_BASE }}/churn-api:${IMAGE_TAG}|g" k8s/api-deployment.yaml
+          sed -i "s|churn-worker:latest|${{ env.REGISTRY }}/${{ env.IMAGE_BASE }}/churn-worker:${IMAGE_TAG}|g" k8s/worker-deployment.yaml
+          sed -i "s|churn-frontend:latest|${{ env.REGISTRY }}/${{ env.IMAGE_BASE }}/churn-frontend:${IMAGE_TAG}|g" k8s/frontend-deployment.yaml
+
+      - name: Apply K8s manifests
+        run: |
+          kubectl apply -f k8s/namespace.yaml
+          kubectl apply -f k8s/secrets.yaml -n churn-app || true
+          kubectl apply -f k8s/postgres-statefulset.yaml -n churn-data
+          kubectl apply -f k8s/redis-deployment.yaml -n churn-data
+          kubectl apply -f k8s/chromadb-deployment.yaml -n churn-data
+          kubectl apply -f k8s/api-deployment.yaml -n churn-app
+          kubectl apply -f k8s/worker-deployment.yaml -n churn-app
+          kubectl apply -f k8s/frontend-deployment.yaml -n churn-app
+          kubectl apply -f k8s/hpa.yaml -n churn-app
+          kubectl apply -f k8s/ingress.yaml -n churn-app
+
+      - name: Wait for rollout
+        run: |
+          kubectl rollout status deployment/churn-api -n churn-app --timeout=300s
+          kubectl rollout status deployment/churn-frontend -n churn-app --timeout=300s
+
+      - name: Smoke test
+        run: |
+          sleep 10
+          curl -f ${{ secrets.STAGING_URL }}/health || exit 1
+
+  # ── Manual approval gate → production ────────────────────
+  deploy-production:
+    name: Deploy to production
+    runs-on: ubuntu-latest
+    needs: deploy-staging
+    environment:
+      name: production
+      url: ${{ secrets.PROD_URL }}
+    # Requires manual approval via GitHub Environments protection rules
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@v3
+
+      - name: Configure kubeconfig (production)
+        run: |
+          mkdir -p ~/.kube
+          echo "${{ secrets.PROD_KUBECONFIG }}" | base64 -d > ~/.kube/config
+          chmod 600 ~/.kube/config
+
+      - name: Update image tags
+        run: |
+          IMAGE_TAG=${{ needs.build-push.outputs.image_tag }}
+          sed -i "s|churn-api:latest|${{ env.REGISTRY }}/${{ env.IMAGE_BASE }}/churn-api:${IMAGE_TAG}|g" k8s/api-deployment.yaml
+          sed -i "s|churn-worker:latest|${{ env.REGISTRY }}/${{ env.IMAGE_BASE }}/churn-worker:${IMAGE_TAG}|g" k8s/worker-deployment.yaml
+          sed -i "s|churn-frontend:latest|${{ env.REGISTRY }}/${{ env.IMAGE_BASE }}/churn-frontend:${IMAGE_TAG}|g" k8s/frontend-deployment.yaml
+
+      - name: Deploy to production
+        run: |
+          kubectl apply -f k8s/ -n churn-app
+          kubectl rollout status deployment/churn-api -n churn-app --timeout=600s
+
+      - name: Production smoke test
+        run: |
+          sleep 15
+          curl -f ${{ secrets.PROD_URL }}/health || exit 1
+
+      - name: Notify Slack on success
+        if: success()
+        run: |
+          curl -X POST ${{ secrets.SLACK_WEBHOOK_URL }} \
+            -H 'Content-type: application/json' \
+            --data '{"text":"✅ Churn Platform deployed to production: ${{ needs.build-push.outputs.image_tag }}"}'

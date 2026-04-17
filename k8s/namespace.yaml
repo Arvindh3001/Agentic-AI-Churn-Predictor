@@ -1,0 +1,26 @@
+# ============================================================
+# Kubernetes Namespaces
+# ============================================================
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: churn-app
+  labels:
+    app.kubernetes.io/part-of: churn-intelligence-platform
+    environment: production
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: churn-data
+  labels:
+    app.kubernetes.io/part-of: churn-intelligence-platform
+    tier: data
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: churn-monitoring
+  labels:
+    app.kubernetes.io/part-of: churn-intelligence-platform
+    tier: monitoring

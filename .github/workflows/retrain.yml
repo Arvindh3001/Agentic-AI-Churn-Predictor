@@ -1,0 +1,146 @@
+name: Weekly Model Retraining + Drift Check
+
+on:
+  schedule:
+    # Every Sunday at 02:00 UTC
+    - cron: "0 2 * * 0"
+  workflow_dispatch:
+    inputs:
+      force_retrain:
+        description: "Force retrain even if no drift detected"
+        required: false
+        default: "false"
+        type: boolean
+
+env:
+  PYTHON_VERSION: "3.12"
+
+jobs:
+  drift-check:
+    name: Check feature drift (PSI)
+    runs-on: ubuntu-latest
+    outputs:
+      drift_detected: ${{ steps.drift.outputs.drift_detected }}
+      psi_max: ${{ steps.drift.outputs.psi_max }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run drift detector
+        id: drift
+        env:
+          DATABASE_URL: ${{ secrets.PROD_DATABASE_URL }}
+          REDIS_URL: ${{ secrets.PROD_REDIS_URL }}
+        run: |
+          python -c "
+          from src.preprocessing.drift_detector import DriftDetector
+          import json, os, sys
+
+          detector = DriftDetector()
+          report = detector.run_drift_check()
+          psi_max = report.get('max_psi', 0)
+          drift_detected = psi_max > 0.2
+
+          print(f'Max PSI: {psi_max:.4f}')
+          print(f'Drift detected: {drift_detected}')
+
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+              f.write(f'drift_detected={str(drift_detected).lower()}\n')
+              f.write(f'psi_max={psi_max:.4f}\n')
+
+          # Fail if critical drift
+          if psi_max > 0.5:
+              print('CRITICAL drift — PSI > 0.5, forcing immediate retrain')
+              sys.exit(0)  # Still pass, let retrain job handle it
+          "
+
+  retrain:
+    name: Retrain model
+    runs-on: ubuntu-latest
+    needs: drift-check
+    if: |
+      needs.drift-check.outputs.drift_detected == 'true' ||
+      github.event.inputs.force_retrain == 'true'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Retrain model
+        env:
+          MLFLOW_TRACKING_URI: ${{ secrets.MLFLOW_TRACKING_URI }}
+          DATABASE_URL: ${{ secrets.PROD_DATABASE_URL }}
+        run: |
+          python src/models/train.py \
+            --experiment-name "weekly-retrain-$(date +%Y%m%d)" \
+            --register-champion
+
+      - name: Run champion-challenger comparison
+        id: compare
+        env:
+          MLFLOW_TRACKING_URI: ${{ secrets.MLFLOW_TRACKING_URI }}
+        run: |
+          python -c "
+          from src.models.registry import compare_champion_challenger
+          import os
+
+          result = compare_champion_challenger()
+          challenger_wins = result.get('challenger_wins', False)
+          delta_auc = result.get('delta_auc', 0)
+
+          print(f'Challenger wins: {challenger_wins}')
+          print(f'Delta AUC: {delta_auc:.4f}')
+
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+              f.write(f'challenger_wins={str(challenger_wins).lower()}\n')
+              f.write(f'delta_auc={delta_auc:.4f}\n')
+          "
+
+      - name: Promote challenger to champion
+        if: steps.compare.outputs.challenger_wins == 'true'
+        env:
+          MLFLOW_TRACKING_URI: ${{ secrets.MLFLOW_TRACKING_URI }}
+        run: |
+          python -c "
+          from src.models.registry import promote_challenger_to_champion
+          promote_challenger_to_champion()
+          print('Challenger promoted to champion!')
+          "
+
+      - name: Notify on retraining outcome
+        if: always()
+        run: |
+          STATUS="${{ job.status }}"
+          PSI="${{ needs.drift-check.outputs.psi_max }}"
+          DELTA="${{ steps.compare.outputs.delta_auc }}"
+          PROMOTED="${{ steps.compare.outputs.challenger_wins }}"
+
+          curl -X POST ${{ secrets.SLACK_WEBHOOK_URL }} \
+            -H 'Content-type: application/json' \
+            --data "{
+              \"text\": \"🤖 Weekly retraining: ${STATUS}\nMax PSI: ${PSI}\nAUC delta: ${DELTA}\nPromoted: ${PROMOTED}\"
+            }"
+
+  no-retrain-notify:
+    name: No drift notification
+    runs-on: ubuntu-latest
+    needs: drift-check
+    if: needs.drift-check.outputs.drift_detected == 'false'
+    steps:
+      - name: Log no drift
+        run: |
+          echo "No significant drift detected (max PSI: ${{ needs.drift-check.outputs.psi_max }})"
+          echo "No retraining triggered."

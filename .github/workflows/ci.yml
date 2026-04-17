@@ -1,0 +1,165 @@
+name: CI — Lint · Test · Build
+
+on:
+  pull_request:
+    branches: [main, develop]
+  push:
+    branches: [develop]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: "3.12"
+  NODE_VERSION: "20"
+  REGISTRY: ghcr.io
+  IMAGE_BASE: ${{ github.repository }}
+
+jobs:
+  # ── Python linting ────────────────────────────────────────
+  lint-python:
+    name: Python lint (Black + isort + flake8)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install lint tools
+        run: pip install black isort flake8 mypy
+
+      - name: black --check
+        run: black --check --line-length 100 .
+
+      - name: isort --check
+        run: isort --check-only --profile black .
+
+      - name: flake8
+        run: flake8 --max-line-length 100 --exclude .venv,mlruns,reports .
+
+  # ── Frontend linting ──────────────────────────────────────
+  lint-frontend:
+    name: Frontend lint (ESLint + TypeScript)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - run: npm ci
+      - run: npm run lint
+      - run: npx tsc --noEmit
+
+  # ── Python unit tests ─────────────────────────────────────
+  test-python:
+    name: Python tests (pytest)
+    runs-on: ubuntu-latest
+    services:
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt pytest pytest-asyncio pytest-cov
+
+      - name: Run tests
+        env:
+          REDIS_URL: redis://localhost:6379/0
+          DATABASE_URL: sqlite:///./test.db
+          JWT_SECRET_KEY: test-secret
+          APP_ENV: test
+        run: |
+          pytest tests/ \
+            --cov=app --cov=src --cov=agents \
+            --cov-report=xml \
+            --cov-report=term-missing \
+            -v --tb=short
+
+      - name: Upload coverage
+        uses: codecov/codecov-action@v4
+        with:
+          file: coverage.xml
+          fail_ci_if_error: false
+
+  # ── Frontend tests ────────────────────────────────────────
+  test-frontend:
+    name: Frontend tests (Jest)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - run: npm ci
+      - run: npm test -- --passWithNoTests --ci
+
+  # ── Docker build check ────────────────────────────────────
+  build-images:
+    name: Build Docker images (no push)
+    runs-on: ubuntu-latest
+    needs: [lint-python, test-python]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build API image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: docker/Dockerfile.api
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          tags: churn-api:pr-${{ github.sha }}
+
+      - name: Build Worker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: docker/Dockerfile.worker
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          tags: churn-worker:pr-${{ github.sha }}
+
+      - name: Build Frontend image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: docker/Dockerfile.frontend
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          tags: churn-frontend:pr-${{ github.sha }}

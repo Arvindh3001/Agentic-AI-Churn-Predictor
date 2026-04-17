@@ -1713,78 +1713,159 @@ A high overall robustness score (> 75%) means the model's predictions are trustw
 
 ---
 
-## 14. Phase 8 — Deployment & Monitoring
+## 14. Phase 8 — Deployment & Monitoring ✅
 
-### 14.1 Docker for Development
+Phase 8 wraps the entire platform in production-grade infrastructure: multi-stage Docker images, a full Kubernetes manifests set, three GitHub Actions CI/CD pipelines, a Prometheus + Grafana monitoring stack with a pre-built dashboard, and GDPR compliance endpoints.
 
-Already covered in Phase 0. `docker compose up` spins up the entire stack locally.
+### 14.1 Docker Containerisation
 
-### 14.2 Kubernetes for Production
+**Files:** `docker/Dockerfile.api`, `docker/Dockerfile.worker`, `docker/Dockerfile.frontend`, `docker/docker-compose.yml`, `docker/docker-compose.prod.yml`
 
-**What is Kubernetes?**
+All images use multi-stage builds to minimise final image size:
 
-If Docker is "run this container", Kubernetes is "run this container, keep 3 copies of it running at all times, automatically replace any that crash, scale up to 10 copies during peak load, and route traffic across all healthy copies."
+| Stage | Purpose |
+|---|---|
+| `builder` | Install dependencies with build tools (gcc, libpq-dev) |
+| `runtime` | Copy only installed packages into a clean slim image |
 
+Each service also runs as a non-root user for security.
+
+```bash
+# Start the full 9-service dev stack
+docker compose -f docker/docker-compose.yml up -d
+
+# Services launched:
+#   postgres  :5432   redis :6379   chromadb :8001   mlflow :5001
+#   api       :8000   worker        frontend :3000
+#   prometheus :9090  grafana :3001
 ```
-Kubernetes Cluster (e.g., on AWS/GCP/Azure)
-├── FastAPI Pods (3 replicas)
-│   └── Auto-scales to 10 during peak
-├── Celery Worker Pods (2 replicas)
-├── Frontend (Next.js) Pod (2 replicas)
-└── Monitoring Stack
-    ├── Prometheus (collects metrics)
-    └── Grafana (visualises metrics)
-```
+
+The `docker-compose.prod.yml` overrides for production: real image tags from GHCR, no dev volume mounts, Gunicorn + uvicorn workers (4 processes), and resource limits.
+
+### 14.2 Kubernetes (Production)
+
+**Files:** `k8s/` (10 manifests)
+
+| File | Resource |
+|---|---|
+| `namespace.yaml` | 3 namespaces: `churn-app`, `churn-data`, `churn-monitoring` |
+| `api-deployment.yaml` | FastAPI Deployment (2 replicas) + ClusterIP Service; Prometheus scrape annotations |
+| `frontend-deployment.yaml` | Next.js Deployment (2 replicas) + Service |
+| `worker-deployment.yaml` | Celery Deployment (2 replicas) |
+| `postgres-statefulset.yaml` | PostgreSQL StatefulSet + headless Service + 20Gi PVC |
+| `redis-deployment.yaml` | Redis Deployment + 5Gi PVC |
+| `chromadb-deployment.yaml` | ChromaDB Deployment + 10Gi PVC |
+| `hpa.yaml` | HPA: API (2–8 pods, CPU 60%), Worker (2–12 pods, CPU 70%) |
+| `ingress.yaml` | nginx Ingress with TLS (cert-manager letsencrypt-prod) + WebSocket support |
+| `secrets.yaml` | Secret template (base64 placeholders — never commit real values) |
+
+**Scale-up behaviour:** API scales 2→8 in 60-second windows (+2 pods per tick); Worker scales 2→12 in 30-second windows (+4 pods per tick). Scale-down has 5-minute stabilisation to prevent thrash.
 
 ### 14.3 GitHub Actions CI/CD
 
-**CI = Continuous Integration:** Every time code is pushed, automated tests run.
+**Files:** `.github/workflows/ci.yml`, `.github/workflows/deploy.yml`, `.github/workflows/retrain.yml`
 
-**CD = Continuous Deployment:** If tests pass, the new version is automatically deployed.
-
+**`ci.yml`** — runs on every PR to main/develop:
 ```
-Developer pushes code to GitHub
-         ↓
-GitHub Actions triggers automatically
-         ↓
-┌──────────────────────────────────┐
-│ CI Pipeline:                     │
-│  1. Install dependencies         │
-│  2. Run linter (flake8)          │
-│  3. Run type checker (mypy)      │
-│  4. Run unit tests (pytest)      │
-│  5. Run integration tests        │
-│  6. Build Docker image           │
-└──────────────┬───────────────────┘
-               │ All checks pass?
-               ▼
-┌──────────────────────────────────┐
-│ CD Pipeline:                     │
-│  1. Push image to container registry│
-│  2. Update Kubernetes manifests  │
-│  3. Rolling deployment (0 downtime)│
-│  4. Health check new pods        │
-│  5. Alert if deployment fails    │
-└──────────────────────────────────┘
+lint-python   → Black + isort + flake8
+lint-frontend → ESLint + tsc --noEmit
+test-python   → pytest with Redis sidecar + coverage upload
+test-frontend → Jest (pass-with-no-tests for now)
+build-images  → Docker build (no push) to verify Dockerfiles compile
+```
+
+**`deploy.yml`** — runs on merge to main:
+```
+build-push        → GHCR multi-platform images (sha + branch + semver tags)
+deploy-staging    → kubectl apply → rollout wait → smoke test /health
+deploy-production → Manual approval gate (GitHub Environments) → kubectl apply → Slack notify
+```
+
+**`retrain.yml`** — cron `0 2 * * 0` (weekly Sunday):
+```
+drift-check   → PSI per feature; outputs drift_detected + psi_max
+retrain       → (only if drift or force flag) train new model, register in MLflow
+compare       → champion-challenger concordance/AUC comparison
+promote       → auto-promote if challenger wins
+notify        → Slack digest with PSI + AUC delta + promotion result
 ```
 
 ### 14.4 Prometheus + Grafana Monitoring
 
-**Prometheus** collects metrics from all services:
-```
-churn_predictions_total = 15,283
-churn_prediction_latency_p99 = 145ms
-model_auc_roc_current = 0.891
-agent_workflow_duration_p95 = 28.3s
-active_websocket_connections = 47
-redis_cache_hit_rate = 0.94
+**Files:** `monitoring/prometheus.yml`, `monitoring/prometheus_metrics.py`, `monitoring/grafana_dashboard.json`, `monitoring/grafana_provisioning/`
+
+**Custom metrics exported by the FastAPI app** (`/metrics` endpoint):
+
+| Metric | Type | Description |
+|---|---|---|
+| `churn_predictions_total` | Counter | Predictions by risk_tier + model_version |
+| `churn_probability` | Histogram | Distribution of predicted probabilities |
+| `agent_pipeline_duration_seconds` | Histogram | End-to-end pipeline latency |
+| `hitl_pending_count` | Gauge | Open approvals awaiting humans |
+| `model_auc_roc_current` | Gauge | Live AUC-ROC of champion model |
+| `feature_drift_psi` | Gauge | PSI per feature (updated weekly) |
+| `celery_tasks_pending` | Gauge | Queue depth per Celery queue |
+| `http_requests_total` | Counter | Request count by method + endpoint + status |
+| `http_request_duration_seconds` | Histogram | Latency by method + endpoint |
+
+The Grafana dashboard JSON is auto-provisioned at startup. It includes panels for: API request rate, latency p50/p95/p99, prediction throughput, HITL queue depth, model AUC gauge, feature drift bar chart, churn probability histogram, and error rate time series.
+
+```bash
+# Grafana: http://localhost:3001  (admin / admin123)
+# Prometheus: http://localhost:9090
+# API metrics: http://localhost:8000/metrics
 ```
 
-**Grafana** visualises these metrics in real-time dashboards, and sends alerts when metrics go out of range:
+### 14.5 GDPR Compliance
 
-```
-ALERT: model_auc_roc_current dropped below 0.85
-ACTION: Page on-call engineer + trigger retraining pipeline
+**File:** `app/routers/gdpr.py`
+
+Three endpoints implement GDPR Articles 15 and 17:
+
+| Endpoint | GDPR Right | Description |
+|---|---|---|
+| `GET /api/v1/gdpr/export/{id}` | Article 15 (Right to Access) | Full JSON export of all held data |
+| `DELETE /api/v1/gdpr/delete/{id}` | Article 17 (Right to Erasure) | Soft-delete + PII anonymisation via SHA-256 hash |
+| `GET /api/v1/gdpr/status/{id}` | — | Deletion status + data categories + rights info |
+
+Soft-delete masks PII fields (name, email, phone) but retains non-identifiable ML features for model audit integrity. Every GDPR action is appended to an immutable `logs/gdpr_audit.jsonl` file.
+
+### 14.6 Frontend System Health Page
+
+**File:** `frontend/src/app/system/page.tsx` (route: `/system`)
+
+Live service status dashboard: polls `GET /health` every 30 seconds, shows a status dot + latency for all services, provides quick-links to Grafana/MLflow/Prometheus, and includes a deployment command reference sheet.
+
+### 14.7 Complete Start-Up Guide
+
+```bash
+# 1. Start infrastructure (Postgres, Redis, ChromaDB, MLflow)
+docker compose -f docker/docker-compose.yml up -d postgres redis chromadb mlflow
+
+# 2. Install Python deps (first time)
+pip install -r requirements.txt
+
+# 3. Generate synthetic data
+python data/synthetic/generate_synthetic.py
+
+# 4. Train models
+python src/models/train.py
+
+# 5. Start FastAPI backend (with hot reload)
+uvicorn app.main:app --reload --port 8000
+
+# 6. Start Next.js frontend
+cd frontend && npm install && npm run dev
+
+# 7. OR start everything containerised
+docker compose -f docker/docker-compose.yml up -d
+
+# 8. Access
+#   Frontend:   http://localhost:3000  (admin / admin123)
+#   API docs:   http://localhost:8000/docs
+#   Grafana:    http://localhost:3001  (admin / admin123)
+#   MLflow:     http://localhost:5001
+#   Prometheus: http://localhost:9090
 ```
 
 ---

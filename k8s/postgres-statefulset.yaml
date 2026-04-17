@@ -1,0 +1,89 @@
+# ============================================================
+# PostgreSQL 17 — StatefulSet + Service + PVC
+# ============================================================
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: churn-postgres
+  namespace: churn-data
+  labels:
+    app: churn-postgres
+spec:
+  serviceName: churn-postgres
+  replicas: 1
+  selector:
+    matchLabels:
+      app: churn-postgres
+  template:
+    metadata:
+      labels:
+        app: churn-postgres
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:17-alpine
+          ports:
+            - containerPort: 5432
+          env:
+            - name: POSTGRES_USER
+              value: churn_user
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: churn-app-secrets
+                  key: postgres-password
+            - name: POSTGRES_DB
+              value: churn_db
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          volumeMounts:
+            - name: postgres-storage
+              mountPath: /var/lib/postgresql/data
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "512Mi"
+            limits:
+              cpu: "1000m"
+              memory: "2Gi"
+          livenessProbe:
+            exec:
+              command:
+                - pg_isready
+                - -U
+                - churn_user
+                - -d
+                - churn_db
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          readinessProbe:
+            exec:
+              command:
+                - pg_isready
+                - -U
+                - churn_user
+                - -d
+                - churn_db
+            initialDelaySeconds: 5
+            periodSeconds: 5
+  volumeClaimTemplates:
+    - metadata:
+        name: postgres-storage
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 20Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: churn-postgres
+  namespace: churn-data
+spec:
+  selector:
+    app: churn-postgres
+  ports:
+    - port: 5432
+      targetPort: 5432
+  clusterIP: None  # Headless service for StatefulSet

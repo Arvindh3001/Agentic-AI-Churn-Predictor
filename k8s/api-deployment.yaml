@@ -1,0 +1,103 @@
+# ============================================================
+# FastAPI Backend — Deployment + Service
+# ============================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: churn-api
+  namespace: churn-app
+  labels:
+    app: churn-api
+    tier: backend
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: churn-api
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app: churn-api
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8000"
+        prometheus.io/path: "/metrics"
+    spec:
+      imagePullSecrets:
+        - name: churn-registry-credentials
+      containers:
+        - name: api
+          image: ghcr.io/your-org/churn-api:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8000
+              name: http
+          env:
+            - name: APP_ENV
+              value: production
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: churn-app-secrets
+                  key: postgres-password
+                  optional: false
+            - name: REDIS_URL
+              value: redis://churn-redis:6379/0
+            - name: CELERY_BROKER_URL
+              value: redis://churn-redis:6379/1
+            - name: JWT_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: churn-app-secrets
+                  key: jwt-secret-key
+            - name: OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: churn-app-secrets
+                  key: openai-api-key
+                  optional: true
+            - name: LANGCHAIN_TRACING_V2
+              value: "true"
+            - name: LANGCHAIN_PROJECT
+              value: churn-platform-prod
+          resources:
+            requests:
+              cpu: "200m"
+              memory: "512Mi"
+            limits:
+              cpu: "1000m"
+              memory: "1Gi"
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 30
+            periodSeconds: 15
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            failureThreshold: 3
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: churn-api
+  namespace: churn-app
+spec:
+  selector:
+    app: churn-api
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 8000
+      name: http
+  type: ClusterIP

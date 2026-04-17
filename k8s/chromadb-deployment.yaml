@@ -1,0 +1,76 @@
+# ============================================================
+# ChromaDB — Deployment + Service + PVC
+# ============================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: churn-chromadb
+  namespace: churn-data
+  labels:
+    app: churn-chromadb
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: churn-chromadb
+  template:
+    metadata:
+      labels:
+        app: churn-chromadb
+    spec:
+      containers:
+        - name: chromadb
+          image: chromadb/chroma:latest
+          ports:
+            - containerPort: 8000
+          env:
+            - name: CHROMA_SERVER_HOST
+              value: "0.0.0.0"
+            - name: CHROMA_SERVER_HTTP_PORT
+              value: "8000"
+            - name: ANONYMIZED_TELEMETRY
+              value: "false"
+          volumeMounts:
+            - name: chroma-storage
+              mountPath: /chroma/chroma
+          resources:
+            requests:
+              cpu: "200m"
+              memory: "512Mi"
+            limits:
+              cpu: "1000m"
+              memory: "2Gi"
+          livenessProbe:
+            httpGet:
+              path: /api/v1/heartbeat
+              port: 8000
+            initialDelaySeconds: 20
+            periodSeconds: 15
+      volumes:
+        - name: chroma-storage
+          persistentVolumeClaim:
+            claimName: chromadb-pvc
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: chromadb-pvc
+  namespace: churn-data
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: churn-chromadb
+  namespace: churn-data
+spec:
+  selector:
+    app: churn-chromadb
+  ports:
+    - port: 8000
+      targetPort: 8000
+  type: ClusterIP

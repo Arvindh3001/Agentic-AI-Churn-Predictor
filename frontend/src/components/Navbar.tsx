@@ -10,6 +10,7 @@ const NAV_ITEMS = [
   { href: "/hitl",         label: "HITL Queue" },
   { href: "/optimization", label: "Optimizer" },
   { href: "/models",       label: "Model Intel" },
+  { href: "/system",       label: "System" },
 ];
 
 export default function Navbar() {
