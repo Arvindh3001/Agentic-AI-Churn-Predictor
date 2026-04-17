@@ -166,6 +166,7 @@ services:
       - /app/.venv
     environment:
       <<: *app-env
+      HOME: /tmp
     networks:
       - churn_net
     healthcheck:
@@ -195,6 +196,7 @@ services:
       - /app/.venv
     environment:
       <<: *app-env
+      HOME: /tmp
     networks:
       - churn_net
 

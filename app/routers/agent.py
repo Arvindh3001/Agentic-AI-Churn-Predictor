@@ -9,6 +9,7 @@ GET  /api/v1/agent/batch/{task_id} — poll batch task progress
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from typing import Any
 
@@ -85,12 +86,17 @@ async def analyse_customer(
         run_id=run_id,
     )
     from agents.orchestrator import ChurnOrchestrator
-    orch = ChurnOrchestrator()
-    result = orch.run_sync(
-        payload.customer_id,
-        triggered_by=triggered_by,
-        run_id=run_id,
-    )
+
+    def _run() -> dict:
+        orch = ChurnOrchestrator()
+        return orch.run_sync(payload.customer_id, triggered_by=triggered_by, run_id=run_id)
+
+    try:
+        loop = asyncio.get_running_loop()
+        result = await loop.run_in_executor(None, _run)
+    except Exception as exc:
+        logger.error("Sync pipeline failed", error=str(exc), exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Pipeline error: {exc}")
 
     prediction = result.get("prediction") or {}
     explanation = result.get("explanation") or {}

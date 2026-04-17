@@ -70,7 +70,7 @@ class VectorStore:
                 "ChromaDB server unreachable — using in-memory client",
                 error=str(exc),
             )
-            return chromadb.Client()
+            return chromadb.EphemeralClient()
 
     def _get_or_create(self, name: str) -> chromadb.Collection:
         return self._client.get_or_create_collection(

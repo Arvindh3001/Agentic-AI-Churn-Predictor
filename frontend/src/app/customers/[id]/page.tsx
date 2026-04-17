@@ -135,8 +135,9 @@ export default function CustomerPage() {
 
   useEffect(() => {
     if (!getToken()) { router.replace("/login"); return; }
+    setError(null);
     fetchCustomer(id)
-      .then(({ customer }) => setCustomer(customer))
+      .then(({ customer }) => { setCustomer(customer); setError(null); })
       .catch((e) => setError(e.message));
   }, [id, router]);
 
@@ -196,8 +197,16 @@ export default function CustomerPage() {
   const pendingHITL = result?.retention_plan?.pending_hitl && !result?.hitl_decision;
   const prob = prediction?.churn_probability ?? 0;
 
+  // ── Insight panel data ──────────────────────────────────────────
+  const topFactor = result?.top_risk_factors?.[0];
+  const roi = result?.retention_plan?.estimated_roi;
+  const roiPct = roi != null ? `${roi >= 0 ? "+" : ""}${(roi * 100).toFixed(0)}%` : null;
+  const ci = result?.confidence_interval;
+
   return (
-    <div style={{ maxWidth: "768px" }} className="space-y-0">
+    <div className="flex gap-8 items-start">
+    {/* ── Main column ─────────────────────────────────────────── */}
+    <div style={{ flex: "0 0 768px", minWidth: 0 }} className="space-y-0">
       {/* ── Breadcrumb ──────────────────────────────────────────── */}
       <div
         className="flex items-center gap-2 mb-6"
@@ -724,6 +733,97 @@ export default function CustomerPage() {
           ↺ Re-run analysis
         </button>
       )}
+    </div>{/* end main column */}
+
+    {/* ── Insights sidebar ────────────────────────────────────── */}
+    <div style={{ flex: "1 1 0", minWidth: "220px", position: "sticky", top: "72px" }}>
+      {!result ? (
+        <div
+          style={{
+            backgroundColor: "#f4f4f4",
+            padding: "20px",
+            borderLeft: "3px solid #e0e0e0",
+          }}
+        >
+          <p style={{ fontSize: "0.75rem", color: "#8d8d8d", letterSpacing: "0.32px" }}>
+            Run the pipeline to generate customer insights.
+          </p>
+        </div>
+      ) : (
+        <div className="space-y-px">
+          {/* Header */}
+          <div style={{ backgroundColor: "#f4f4f4", padding: "16px 20px", borderLeft: "3px solid #0f62fe" }}>
+            <p style={{ fontSize: "0.6875rem", fontWeight: 600, color: "#0f62fe", letterSpacing: "0.32px", textTransform: "uppercase", marginBottom: "2px" }}>
+              Quick Insights
+            </p>
+            <p style={{ fontSize: "0.75rem", color: "#525252", letterSpacing: "0.32px" }}>
+              Based on latest pipeline run
+            </p>
+          </div>
+
+          {/* Churn probability */}
+          <div style={{ backgroundColor: "#ffffff", padding: "16px 20px", borderLeft: "3px solid #e0e0e0" }}>
+            <p style={{ fontSize: "0.6875rem", color: "#525252", letterSpacing: "0.32px", marginBottom: "4px", textTransform: "uppercase" }}>
+              Churn Risk
+            </p>
+            <p style={{ fontSize: "1.5rem", fontWeight: 300, color: prob >= 0.85 ? "#da1e28" : prob >= 0.70 ? "#ff832b" : prob >= 0.40 ? "#b28600" : "#24a148" }}>
+              {(prob * 100).toFixed(1)}%
+            </p>
+            {ci && (
+              <p style={{ fontSize: "0.6875rem", color: "#8d8d8d", letterSpacing: "0.32px", marginTop: "2px" }}>
+                95% CI {(ci[0] * 100).toFixed(0)}–{(ci[1] * 100).toFixed(0)}%
+              </p>
+            )}
+          </div>
+
+          {/* Top driver */}
+          {topFactor && (
+            <div style={{ backgroundColor: "#ffffff", padding: "16px 20px", borderLeft: "3px solid #e0e0e0" }}>
+              <p style={{ fontSize: "0.6875rem", color: "#525252", letterSpacing: "0.32px", marginBottom: "4px", textTransform: "uppercase" }}>
+                Top Driver
+              </p>
+              <p style={{ fontSize: "0.875rem", fontWeight: 600, color: "#161616", letterSpacing: "0.16px" }}>
+                {topFactor.label ?? topFactor.feature}
+              </p>
+              <p style={{ fontSize: "0.75rem", color: topFactor.shap_value > 0 ? "#da1e28" : "#24a148", letterSpacing: "0.32px", marginTop: "2px" }}>
+                {topFactor.shap_value > 0 ? "↑ increases" : "↓ reduces"} churn risk
+              </p>
+            </div>
+          )}
+
+          {/* Retention ROI */}
+          {roiPct && (
+            <div style={{ backgroundColor: "#ffffff", padding: "16px 20px", borderLeft: "3px solid #e0e0e0" }}>
+              <p style={{ fontSize: "0.6875rem", color: "#525252", letterSpacing: "0.32px", marginBottom: "4px", textTransform: "uppercase" }}>
+                Retention ROI
+              </p>
+              <p style={{ fontSize: "1.5rem", fontWeight: 300, color: roi! >= 0 ? "#24a148" : "#da1e28" }}>
+                {roiPct}
+              </p>
+              {result.retention_plan?.total_cost_usd != null && (
+                <p style={{ fontSize: "0.6875rem", color: "#8d8d8d", letterSpacing: "0.32px", marginTop: "2px" }}>
+                  ${result.retention_plan.total_cost_usd.toFixed(0)} investment
+                </p>
+              )}
+            </div>
+          )}
+
+          {/* Steps completed */}
+          <div style={{ backgroundColor: "#ffffff", padding: "16px 20px", borderLeft: "3px solid #e0e0e0" }}>
+            <p style={{ fontSize: "0.6875rem", color: "#525252", letterSpacing: "0.32px", marginBottom: "4px", textTransform: "uppercase" }}>
+              Pipeline
+            </p>
+            <p style={{ fontSize: "0.875rem", fontWeight: 600, color: "#24a148", letterSpacing: "0.16px" }}>
+              {result.completed_steps?.length ?? 0} / {STEPS.length} steps
+            </p>
+            <p style={{ fontSize: "0.6875rem", color: "#8d8d8d", letterSpacing: "0.32px", marginTop: "2px" }}>
+              completed successfully
+            </p>
+          </div>
+        </div>
+      )}
+    </div>
+
     </div>
   );
 }

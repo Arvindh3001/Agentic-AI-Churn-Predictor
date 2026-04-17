@@ -87,9 +87,12 @@ If you intend to write code on the primary services (Backend API or Next.js Fron
     python -m uvicorn app.main:app --reload --port 8000
     ```
 4.  **Start the Celery Worker:** (Open a separate terminal, activate the `.venv`, then run this. Ensure Redis is running!)
-    ```bash
-    celery -A celery_app.celery worker --loglevel=info
+    ```powershell
+    python -m celery -A celery_app.celery_app worker --loglevel=info
     ```
+    > [!NOTE]
+    > **Windows only:** Use `python -m celery` instead of calling `celery` directly. On Windows (especially with OneDrive-synced paths), `celery.exe` in the `.venv\Scripts\` folder may be blocked by Windows security policy with "Access is denied".
+    > The app argument is `celery_app.celery_app` — `celery_app` (the filename) dot `celery_app` (the Celery instance variable name inside the file).
 
 ### 3B. Frontend (Next.js)
 

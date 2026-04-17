@@ -817,7 +817,41 @@ This waterfall diagram tells the account manager exactly what to focus on.
 
 ---
 
-### 8.2 LIME — Model-Agnostic Local Explanations
+### 8.2 Explainability Benchmarking
+
+**File:** `src/explainability/benchmarking.py`
+
+#### Why measure explanation quality?
+
+Generating explanations is only half the story — you also need to know *how good* those explanations are. The `ExplainabilityBenchmark` class evaluates explanations across three independent dimensions:
+
+| Dimension | What it measures | How |
+|---|---|---|
+| **Fidelity** | Does the LIME surrogate accurately approximate the real model in the local neighbourhood? | AUC between LIME surrogate predictions and true model probabilities on 500 perturbed neighbours |
+| **Stability** | Are explanations consistent for similar customers? | Spearman rank correlation of top-K SHAP feature rankings across the 10 nearest neighbours |
+| **SHAP-LIME Agreement** | Do both explanation methods tell the same story? | Rank overlap score (already described in SHAP-LIME agreement) |
+
+#### How to run it
+
+```python
+from src.explainability.benchmarking import ExplainabilityBenchmark
+
+bench = ExplainabilityBenchmark(model, shap_explainer, lime_explainer)
+report = bench.run(X_sample, n_instances=50)
+# {'mean_fidelity': 0.84, 'mean_stability': 0.79, 'mean_agreement': 0.73, ...}
+```
+
+#### Interpreting the report
+
+- **Fidelity ≥ 0.80** — LIME explanations reliably reflect the model's local logic
+- **Stability ≥ 0.75** — similar customers get similar explanations (low noise)
+- **Agreement ≥ 0.70** — both SHAP and LIME agree on what matters most
+
+A low fidelity score means the model has a complex, highly non-linear decision boundary in that region — a signal to flag those customers for extra human attention.
+
+---
+
+### 8.3 LIME — Model-Agnostic Local Explanations
 
 **File:** `src/explainability/lime_explainer.py`
 
@@ -860,7 +894,7 @@ Agreement score = average = 0.73  (73% agreement — good!)
 
 ---
 
-### 8.3 DiCE — Counterfactual Explanations
+### 8.4 DiCE — Counterfactual Explanations
 
 **File:** `src/explainability/counterfactual.py`
 
@@ -909,7 +943,7 @@ Final ranking = optimal balance of all four dimensions.
 
 ---
 
-### 8.4 Narrative Generator
+### 8.5 Narrative Generator
 
 **File:** `src/explainability/narrative_generator.py`
 
@@ -1104,8 +1138,8 @@ python agents/orchestrator.py --customer-id demo-customer-001
 # With OpenAI (requires OPENAI_API_KEY in .env)
 python agents/orchestrator.py --customer-id demo-customer-001 --llm openai
 
-# Start Celery worker for async tasks
-celery -A celery_app worker --loglevel=info --concurrency=4
+# Start Celery worker for async tasks (Windows: use python -m celery)
+python -m celery -A celery_app.celery_app worker --loglevel=info --concurrency=4
 ```
 
 ---
@@ -1446,10 +1480,32 @@ Final payload (prediction + explanation + plan) delivered
 | `app/main.py` | FastAPI app with lifespan model pre-warm, CORS, GZip |
 | `app/middleware/auth.py` | JWT Bearer validation, `CurrentUser` dependency |
 | `app/routers/auth.py` | `POST /auth/token` — OAuth2 login, demo users |
-| `app/routers/customers.py` | Customer list, high-risk watchlist, single customer |
+| `app/routers/customers.py` | Customer list, high-risk watchlist, single customer, **PATCH edit** |
 | `app/routers/agent.py` | Trigger analysis, poll status, batch endpoint |
+| `app/routers/analytics.py` | Survival, cohort, seasonality, fairness, robustness, optimizer |
+| `app/routers/gdpr.py` | GDPR export, delete, status endpoints |
 | `app/websockets/agent_stream.py` | `GET /ws/agent/{run_id}` — live step streaming |
+| `app/websockets/customer_broadcast.py` | `GET /ws/customers` — real-time customer update push |
 | `app/hitl_webhook.py` | HITL decision, Slack callback, feedback, audit |
+
+#### Customer editing architecture
+
+Edits submitted via the dashboard follow this flow:
+
+```
+User edits customer in EditCustomerModal
+         ↓
+PATCH /api/v1/customers/{id}  (sends only changed fields)
+         ↓
+Backend merges: CSV baseline + existing _CUSTOMER_OVERRIDES + new patch
+Stores merged editable fields in _CUSTOMER_OVERRIDES[customer_id]
+         ↓
+Broadcasts {type: "customer_updated", customer: record}
+to all /ws/customers WebSocket connections
+         ↓
+Every open dashboard tab receives the update
+Row flashes blue for 2 seconds, toast notification shown
+```
 
 **JWT Authentication**
 ```
@@ -1485,9 +1541,10 @@ Event types streamed:
 POST /auth/token                       Log in, receive JWT
 GET  /auth/verify                      Validate token
 
-GET  /api/v1/customers                 List all customers (paginated)
-GET  /api/v1/customers/high-risk       Top churned by monthly charges
-GET  /api/v1/customers/{id}            Single customer + last analysis
+GET   /api/v1/customers                List all customers (paginated)
+GET   /api/v1/customers/high-risk      Top churned by monthly charges
+GET   /api/v1/customers/{id}           Single customer + last analysis
+PATCH /api/v1/customers/{id}           Update editable fields (in-memory overlay)
 
 POST /api/v1/agent/analyse             Start pipeline (async Celery)
 GET  /api/v1/agent/status/{run_id}     Poll pipeline status
@@ -1495,13 +1552,16 @@ POST /api/v1/agent/batch               Batch analysis (max 100)
 GET  /api/v1/agent/batch/{task_id}     Poll batch progress
 
 WS   /ws/agent/{run_id}                Live step event stream
+WS   /ws/customers                     Real-time customer update push (dashboard)
 
 POST /hitl/decision                    CSM approve/reject
 POST /hitl/slack/interactive           Slack button callback
 POST /hitl/feedback                    Record outcome
+GET  /hitl/status/{run_id}             HITL decision status for a run
 GET  /hitl/audit                       Audit log (last N entries)
 GET  /hitl/feedback/stats              Feedback counts + A/B breakdown
 GET  /health                           Health check
+GET  /metrics                          Prometheus scrape endpoint
 ```
 
 ---
@@ -1522,13 +1582,19 @@ frontend/
 │   │   ├── page.tsx                  Dashboard — high-risk watchlist
 │   │   ├── login/page.tsx            JWT login form
 │   │   ├── customers/[id]/page.tsx   Customer detail + live pipeline
-│   │   └── hitl/page.tsx             HITL audit log + feedback stats
+│   │   ├── hitl/page.tsx             HITL audit log + feedback stats
+│   │   ├── optimization/page.tsx     Budget optimizer
+│   │   ├── models/page.tsx           Model Intelligence (fairness, robustness, etc.)
+│   │   └── system/page.tsx           System health + service status
 │   ├── components/
 │   │   ├── AppShell.tsx              Conditional nav (hides on /login)
 │   │   ├── Navbar.tsx                Dark sidebar with route links
 │   │   ├── PipelineStream.tsx        WebSocket step progress + results
 │   │   ├── RetentionPlanCard.tsx     Cost / ROI / actions display
-│   │   └── RiskBadge.tsx             Color-coded CRITICAL/HIGH/MEDIUM/LOW
+│   │   ├── RiskBadge.tsx             Color-coded CRITICAL/HIGH/MEDIUM/LOW
+│   │   └── EditCustomerModal.tsx     Inline customer field editor (modal)
+│   ├── hooks/
+│   │   └── useCustomerSocket.ts      React hook for /ws/customers WebSocket
 │   ├── lib/
 │   │   └── api.ts                    Typed API client (all endpoints)
 │   └── types/
@@ -1543,17 +1609,23 @@ frontend/
 - Demo credentials shown for portfolio demo use
 
 **Dashboard (`/`)**
-- Fetches top 20 high-risk customers via `GET /api/v1/customers/high-risk`
-- KPI strip: watched count, feedback collected, retention rate
-- Table with risk tier badge — click any row → `/customers/{id}`
+- Fetches top 25 high-risk customers via `GET /api/v1/customers/high-risk`
+- KPI strip: total customers, churn rate, monthly revenue at risk, retention rate from feedback
+- Risk-tier summary tiles (CRITICAL / HIGH counts)
+- Watchlist table with 9 columns: customer ID, risk badge, heuristic risk score, monthly charges, tenure, contract type, support tickets, feature adoption mini-bar, NPS
+- Hover a row → **Edit** (opens `EditCustomerModal`) and **Analyse →** (navigates to customer page)
+- Multi-select checkboxes per row + select-all — selection count badge shown in header
+- Batch selection toolbar (floating dark bar): shows selected count; Batch Analyse button (coming soon); Clear selection
+- Toast notifications (bottom-right): success, error, info — auto-dismiss after 3.5 s
+- Real-time push updates via `useCustomerSocket` hook — rows flash blue when updated from another tab
+- Risk score legend panel at the bottom of the table
 
 **Customer Analysis (`/customers/{id}`)**
 - Shows customer profile card (monthly charges, support tickets, NPS, adoption)
-- "Run Churn Analysis" button → `POST /api/v1/agent/analyse` → opens WebSocket
-- `PipelineStream` renders live step progress for all 6 pipeline stages:
-  Data Intelligence → Prediction → SHAP Explanation →
-  Counterfactual → Retention Strategy → HITL Review
-- Final results appear inline: probability bar, narrative, SHAP factors, plan
+- "Run Churn Analysis" button → `POST /api/v1/agent/analyse` → runs synchronously (`async_mode: false`)
+- Six-step pipeline progress tracker with animated status indicators (running → complete)
+- Final results appear inline: probability bar with 95% CI, narrative, SHAP factors, retention plan
+- **Quick Insights sidebar** — sticky right-hand panel that shows a one-liner before a run, then four summary tiles after: Churn Risk % (colour-coded), Top SHAP Driver, Retention ROI, and steps completed count
 - HITL quick-action panel for CRITICAL customers (Approve / Reject buttons)
 - Outcome feedback form (Retained / Churned / Unknown) after analysis completes
 
@@ -1562,13 +1634,65 @@ frontend/
 - A/B group breakdown (control vs treatment)
 - Append-only audit log table: colour-coded event types, run IDs, timestamps
 
+**Optimizer (`/optimization`)** — see Phase 7, Section 13.6
+
+**Model Intelligence (`/models`)** — see Phase 7, Section 13.6
+
+**System Health (`/system`)** — see Phase 8, Section 14.6
+
 #### Key frontend patterns
 
 **Auth guard** — every protected page checks `getToken()` on mount; redirects to `/login` if missing; `api.ts` auto-redirects on any 401 response.
 
 **Optimistic streaming** — `PipelineStream` opens a WebSocket immediately after `run_id` is received; no polling required; all step state held locally in `useState`.
 
-**Tailwind CSS** — utility-first styling with no external UI library; consistent slate/indigo colour palette throughout.
+**Real-time dashboard push** — `useCustomerSocket` establishes a persistent `/ws/customers` WebSocket on the dashboard page. When any client edits a customer, the server broadcasts the updated record to all connected clients — no page reload required.
+
+**In-memory customer editing** — `PATCH /api/v1/customers/{id}` stores edits in a process-level `_CUSTOMER_OVERRIDES` dict. All reads (`GET /api/v1/customers`, `GET /api/v1/customers/{id}`, high-risk endpoint) merge this overlay on top of the CSV baseline. The overlay is lost on server restart; production should back this with PostgreSQL.
+
+**IBM Carbon Design System** — the UI uses Carbon's design tokens (colours, typography, spacing) implemented in Tailwind utility classes with `cds-` CSS class prefixes. Button variants: `cds-btn--primary` (blue), `cds-btn--secondary` (white outline), `cds-btn--ghost` (transparent).
+
+**Toast notifications** — a local `toasts` state array drives a fixed bottom-right stack. Toasts auto-dismiss after 3.5 s. Three types: `success` (green), `error` (red), `info` (blue).
+
+#### EditCustomerModal component
+
+**File:** `frontend/src/components/EditCustomerModal.tsx`
+
+A lightweight modal dialog that allows Customer Success Managers to adjust five editable customer fields directly from the watchlist dashboard:
+
+| Field | Control | Validation |
+|---|---|---|
+| `contract_type` | `<select>` — Month-to-Month / One Year / Two Year | Required |
+| `monthly_charges` | Number input | 0–250, 0.01 step |
+| `num_support_tickets_30d` | Number input | 0–50 |
+| `feature_adoption_rate` | Range slider (0–100%) | Live colour: green ≥60%, amber ≥30%, red <30% |
+| `nps_score` | Range slider (1–10) | Live colour: green ≥7, amber ≥5, red <5 |
+
+On save, the modal calls `PATCH /api/v1/customers/{id}`. Changes are stored in the backend's in-memory overlay (`_CUSTOMER_OVERRIDES`) and immediately broadcast via the `/ws/customers` WebSocket, so all other open dashboard tabs update in real-time without a page reload.
+
+The modal implements IBM Carbon Design System aesthetics: 0 px border-radius (rectangular), `#161616` primary text, `#e0e0e0` hairline borders, and Carbon-style primary/secondary button row.
+
+#### useCustomerSocket hook
+
+**File:** `frontend/src/hooks/useCustomerSocket.ts`
+
+A React custom hook that opens a persistent WebSocket connection to `/ws/customers` and fires a callback for every `customer_updated` message from the server:
+
+```typescript
+// How it's used on the Dashboard page:
+useCustomerSocket((updatedCustomer) => {
+  // 1. Update the watchlist row in-place (no API call)
+  setWatchlist(prev => prev.map(c =>
+    c.customer_id === updatedCustomer.customer_id ? updatedCustomer : c
+  ));
+  // 2. Flash the row blue for 2 seconds
+  flashRow(updatedCustomer.customer_id);
+  // 3. Show a toast: "C-4821 synced in real-time"
+  showToast(`${updatedCustomer.customer_id} synced in real-time`, "info");
+});
+```
+
+The hook automatically cleans up the WebSocket on component unmount via a `useEffect` cleanup function.
 
 ---
 
@@ -1730,6 +1854,11 @@ All images use multi-stage builds to minimise final image size:
 
 Each service also runs as a non-root user for security.
 
+**Important Docker notes:**
+- `Dockerfile.api` and `Dockerfile.worker` include `libgomp1` in the runtime stage — required by XGBoost/scikit-learn for multi-threaded inference. Without it the prediction agent crashes with `libgomp.so.1: cannot open shared object file`.
+- Both `api` and `worker` services set `HOME: /tmp` in `docker-compose.yml` so tools that write to `~/` (ChromaDB Rust bindings, telemetry libraries) have a writable directory when running as the non-root `churn` user.
+- On first run, the postgres volume is initialised with `POSTGRES_USER: churn_user`. If you ever wipe and recreate the volume (`docker volume rm docker_postgres_data`) the user and database are re-created automatically on next `up`.
+
 ```bash
 # Start the full 9-service dev stack
 docker compose -f docker/docker-compose.yml up -d
@@ -1838,29 +1967,35 @@ Live service status dashboard: polls `GET /health` every 30 seconds, shows a sta
 
 ### 14.7 Complete Start-Up Guide
 
-```bash
-# 1. Start infrastructure (Postgres, Redis, ChromaDB, MLflow)
-docker compose -f docker/docker-compose.yml up -d postgres redis chromadb mlflow
+> **Windows note:** Use `python -m celery` instead of calling `celery` directly — the `celery.exe` in venv Scripts is blocked by Windows security policy on OneDrive-synced directories.
 
-# 2. Install Python deps (first time)
-pip install -r requirements.txt
-
-# 3. Generate synthetic data
-python data/synthetic/generate_synthetic.py
-
-# 4. Train models
-python src/models/train.py
-
-# 5. Start FastAPI backend (with hot reload)
-uvicorn app.main:app --reload --port 8000
-
-# 6. Start Next.js frontend
-cd frontend && npm install && npm run dev
-
-# 7. OR start everything containerised
+```powershell
+# 1. Start all infrastructure services
 docker compose -f docker/docker-compose.yml up -d
 
-# 8. Access
+# 2. (First time only) Install Python deps
+pip install -r requirements.txt
+
+# 3. (First time only) Generate synthetic data
+python data/synthetic/generate_synthetic.py
+
+# 4. (First time only) Train models
+python src/models/train.py
+
+# 5. Start FastAPI backend — Terminal 2 (activate venv first)
+python -m uvicorn app.main:app --reload --port 8000
+
+# 6. Start Celery worker — Terminal 3 (activate venv first)
+python -m celery -A celery_app.celery_app worker --loglevel=info
+
+# 7. Start Next.js frontend — Terminal 4
+cd frontend
+npm install   # first time only
+npm run dev
+```
+
+```
+# Access points:
 #   Frontend:   http://localhost:3000  (admin / admin123)
 #   API docs:   http://localhost:8000/docs
 #   Grafana:    http://localhost:3001  (admin / admin123)
