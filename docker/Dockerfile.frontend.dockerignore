@@ -1,0 +1,39 @@
+# Virtual environments
+.venv
+venv/
+ENV/
+env/
+
+# Node
+node_modules/
+.next/
+
+# Git
+.git/
+.github/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+.eggs/
+
+# ML & Data
+mlruns/
+data/raw/
+data/processed/
+models/artifacts/
+
+# Logs & IDE
+logs/
+.vscode/
+.idea/
+.DS_Store
+
+# Secrets
+.env
+.env.local
+.env.production
