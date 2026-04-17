@@ -120,7 +120,7 @@ export default function ModelsPage() {
     setTabLoading("fairness", true);
     try {
       const data = await fetchFairnessReport();
-      setFairness(data as FairnessReport);
+      setFairness(data as unknown as FairnessReport);
     } catch (e) {
       setTabError("fairness", e instanceof Error ? e.message : "Failed");
     } finally {
@@ -133,7 +133,7 @@ export default function ModelsPage() {
     setTabLoading("robustness", true);
     try {
       const data = await fetchRobustnessReport();
-      setRobustness(data as RobustnessReport);
+      setRobustness(data as unknown as RobustnessReport);
     } catch (e) {
       setTabError("robustness", e instanceof Error ? e.message : "Failed");
     } finally {
@@ -146,7 +146,7 @@ export default function ModelsPage() {
     setTabLoading("survival", true);
     try {
       const data = await fetchSurvivalAnalysis();
-      setSurvival(data as SurvivalData);
+      setSurvival(data as unknown as SurvivalData);
     } catch (e) {
       setTabError("survival", e instanceof Error ? e.message : "Failed");
     } finally {
@@ -159,7 +159,7 @@ export default function ModelsPage() {
     setTabLoading("cohort", true);
     try {
       const data = await fetchCohortAnalysis();
-      setCohort(data as CohortData);
+      setCohort(data as unknown as CohortData);
     } catch (e) {
       setTabError("cohort", e instanceof Error ? e.message : "Failed");
     } finally {
@@ -178,10 +178,10 @@ export default function ModelsPage() {
   useEffect(() => { loadFairness(); }, []); // load default tab on mount
 
   const TABS: { key: Tab; label: string }[] = [
-    { key: "fairness",   label: "Fairness" },
+    { key: "fairness", label: "Fairness" },
     { key: "robustness", label: "Robustness" },
-    { key: "survival",   label: "Survival Analysis" },
-    { key: "cohort",     label: "Cohort Retention" },
+    { key: "survival", label: "Survival Analysis" },
+    { key: "cohort", label: "Cohort Retention" },
   ];
 
   return (
@@ -224,33 +224,33 @@ export default function ModelsPage() {
         {/* FAIRNESS TAB */}
         {tab === "fairness" && (
           loading.fairness ? <LoadingPane /> :
-          errors.fairness  ? <ErrorPane msg={errors.fairness} /> :
-          fairness ? <FairnessTab data={fairness} /> :
-          <EmptyPane />
+            errors.fairness ? <ErrorPane msg={errors.fairness} /> :
+              fairness ? <FairnessTab data={fairness} /> :
+                <EmptyPane />
         )}
 
         {/* ROBUSTNESS TAB */}
         {tab === "robustness" && (
           loading.robustness ? <LoadingPane /> :
-          errors.robustness  ? <ErrorPane msg={errors.robustness} /> :
-          robustness ? <RobustnessTab data={robustness} /> :
-          <EmptyPane />
+            errors.robustness ? <ErrorPane msg={errors.robustness} /> :
+              robustness ? <RobustnessTab data={robustness} /> :
+                <EmptyPane />
         )}
 
         {/* SURVIVAL TAB */}
         {tab === "survival" && (
           loading.survival ? <LoadingPane /> :
-          errors.survival  ? <ErrorPane msg={errors.survival} /> :
-          survival ? <SurvivalTab data={survival} /> :
-          <EmptyPane />
+            errors.survival ? <ErrorPane msg={errors.survival} /> :
+              survival ? <SurvivalTab data={survival} /> :
+                <EmptyPane />
         )}
 
         {/* COHORT TAB */}
         {tab === "cohort" && (
           loading.cohort ? <LoadingPane /> :
-          errors.cohort  ? <ErrorPane msg={errors.cohort} /> :
-          cohort ? <CohortTab data={cohort} /> :
-          <EmptyPane />
+            errors.cohort ? <ErrorPane msg={errors.cohort} /> :
+              cohort ? <CohortTab data={cohort} /> :
+                <EmptyPane />
         )}
       </div>
     </div>
@@ -292,8 +292,8 @@ function FairnessTab({ data }: { data: FairnessReport }) {
         {[
           { label: "OVERALL", value: s.overall_pass ? "PASS" : "FAIL", color: s.overall_pass ? "#24a148" : "#da1e28" },
           { label: "CHECKS RUN", value: s.total_checks, color: "#161616" },
-          { label: "PASSED",  value: s.passed,  color: "#24a148" },
-          { label: "FAILED",  value: s.failed,  color: s.failed > 0 ? "#da1e28" : "#24a148" },
+          { label: "PASSED", value: s.passed, color: "#24a148" },
+          { label: "FAILED", value: s.failed, color: s.failed > 0 ? "#da1e28" : "#24a148" },
         ].map(({ label, value, color }) => (
           <div key={label} style={{ backgroundColor: "#f4f4f4", padding: "20px" }}>
             <p style={{ fontSize: "0.75rem", color: "#525252", letterSpacing: "0.32px", textTransform: "uppercase", marginBottom: "6px" }}>{label}</p>

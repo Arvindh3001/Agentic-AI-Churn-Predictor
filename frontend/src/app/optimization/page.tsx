@@ -51,7 +51,7 @@ export default function OptimizationPage() {
         max_actions_per_customer: maxActions,
         risk_tier_filter: riskTiers,
       });
-      setResult(res as OptimizeResult);
+      setResult(res as unknown as OptimizeResult);
       setRan(true);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Optimizer failed");
@@ -62,9 +62,9 @@ export default function OptimizationPage() {
 
   const TIER_COLORS: Record<string, { bg: string; color: string }> = {
     CRITICAL: { bg: "#fff1f1", color: "#da1e28" },
-    HIGH:     { bg: "#fff2e8", color: "#ba4e00" },
-    MEDIUM:   { bg: "#fcf4d6", color: "#684e00" },
-    LOW:      { bg: "#defbe6", color: "#044317" },
+    HIGH: { bg: "#fff2e8", color: "#ba4e00" },
+    MEDIUM: { bg: "#fcf4d6", color: "#684e00" },
+    LOW: { bg: "#defbe6", color: "#044317" },
   };
 
   return (
@@ -188,10 +188,10 @@ export default function OptimizationPage() {
           {/* KPI tiles */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-px mt-1" style={{ backgroundColor: "#c6c6c6" }}>
             {[
-              { label: "BUDGET ALLOCATED",         value: `$${result.total_cost?.toLocaleString() ?? 0}`,                  color: "#0f62fe" },
-              { label: "CUSTOMERS COVERED",         value: result.plan?.length ?? 0,                                        color: "#161616" },
-              { label: "EXPECTED REVENUE SAVED",    value: `$${result.total_expected_revenue_saved?.toLocaleString() ?? 0}`, color: "#24a148" },
-              { label: "ROI",                       value: result.roi != null ? `${result.roi.toFixed(1)}×` : "—",           color: "#24a148" },
+              { label: "BUDGET ALLOCATED", value: `$${result.total_cost?.toLocaleString() ?? 0}`, color: "#0f62fe" },
+              { label: "CUSTOMERS COVERED", value: result.plan?.length ?? 0, color: "#161616" },
+              { label: "EXPECTED REVENUE SAVED", value: `$${result.total_expected_revenue_saved?.toLocaleString() ?? 0}`, color: "#24a148" },
+              { label: "ROI", value: result.roi != null ? `${result.roi.toFixed(1)}×` : "—", color: "#24a148" },
             ].map(({ label, value, color }) => (
               <div key={label} style={{ backgroundColor: "#f4f4f4", padding: "24px" }}>
                 <p style={{ fontSize: "0.75rem", color: "#525252", letterSpacing: "0.32px", textTransform: "uppercase", marginBottom: "8px" }}>

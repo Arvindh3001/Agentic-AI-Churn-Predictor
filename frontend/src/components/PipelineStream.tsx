@@ -16,12 +16,12 @@ const STEPS = [
 ];
 
 const STEP_LABELS: Record<string, string> = {
-  data_intelligence:    "Data Intelligence",
-  prediction:           "Churn Prediction",
-  explanation:          "SHAP Explanation",
-  counterfactual:       "Counterfactual Analysis",
+  data_intelligence: "Data Intelligence",
+  prediction: "Churn Prediction",
+  explanation: "SHAP Explanation",
+  counterfactual: "Counterfactual Analysis",
   retention_strategist: "Retention Strategy",
-  hitl:                 "HITL Review",
+  hitl: "HITL Review",
 };
 
 interface Props {
@@ -98,7 +98,7 @@ export default function PipelineStream({ runId, onComplete }: Props) {
       if (event.status === "running") setActiveStep(event.step);
 
       if (event.status === "completed") {
-        setCompletedSteps((prev) => new Set([...prev, event.step]));
+        setCompletedSteps((prev) => new Set([...Array.from(prev), event.step]));
         setActiveStep(null);
       }
 
@@ -233,8 +233,8 @@ export default function PipelineStream({ runId, onComplete }: Props) {
                   height: "100%",
                   backgroundColor:
                     prob >= 0.85 ? "#da1e28" :
-                    prob >= 0.70 ? "#ff832b" :
-                    prob >= 0.40 ? "#f1c21b" : "#24a148",
+                      prob >= 0.70 ? "#ff832b" :
+                        prob >= 0.40 ? "#f1c21b" : "#24a148",
                   transition: "width 0.7s ease",
                 }}
               />

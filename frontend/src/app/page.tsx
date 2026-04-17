@@ -84,13 +84,13 @@ export default function DashboardPage() {
   }
 
   function flashRow(customerId: string) {
-    setFlashIds((prev) => new Set([...prev, customerId]));
+    setFlashIds((prev) => new Set([...Array.from(prev), customerId]));
     setTimeout(() => setFlashIds((prev) => { const n = new Set(prev); n.delete(customerId); return n; }), 2000);
   }
 
   const handleSocketUpdate = useCallback((updated: Customer) => {
     setWatchlist((prev) => prev.map((c) => c.customer_id === updated.customer_id ? updated : c));
-    setFlashIds((prev) => new Set([...prev, updated.customer_id]));
+    setFlashIds((prev) => new Set([...Array.from(prev), updated.customer_id]));
     setTimeout(() => setFlashIds((prev) => { const n = new Set(prev); n.delete(updated.customer_id); return n; }), 2000);
     const id = "ws-" + updated.customer_id + Date.now();
     setToastsRef.current((prev) => [...prev, { id, message: `${updated.customer_id} synced in real-time`, type: "info" as ToastType }]);
@@ -405,10 +405,10 @@ export default function DashboardPage() {
                 const rowBg = isFlashing
                   ? "#edf5ff"
                   : isSelected
-                  ? "#edf5ff"
-                  : isEven
-                  ? "#ffffff"
-                  : "#f4f4f4";
+                    ? "#edf5ff"
+                    : isEven
+                      ? "#ffffff"
+                      : "#f4f4f4";
 
                 return (
                   <tr
@@ -521,7 +521,7 @@ export default function DashboardPage() {
                                 height: "100%",
                                 backgroundColor:
                                   c.feature_adoption_rate >= 0.6 ? "#24a148" :
-                                  c.feature_adoption_rate >= 0.3 ? "#f1c21b" : "#da1e28",
+                                    c.feature_adoption_rate >= 0.3 ? "#f1c21b" : "#da1e28",
                                 transition: "width 0.5s ease",
                               }}
                             />
@@ -545,7 +545,7 @@ export default function DashboardPage() {
                             letterSpacing: "0.16px",
                             color:
                               c.nps_score >= 7 ? "#24a148" :
-                              c.nps_score >= 5 ? "#684e00" : "#da1e28",
+                                c.nps_score >= 5 ? "#684e00" : "#da1e28",
                           }}
                         >
                           {c.nps_score}
@@ -603,9 +603,9 @@ export default function DashboardPage() {
         <div className="flex gap-8 flex-wrap">
           {[
             { range: "75–99", label: "Critical", color: "#da1e28" },
-            { range: "55–74", label: "High",     color: "#ba4e00" },
-            { range: "35–54", label: "Medium",   color: "#684e00" },
-            { range: "0–34",  label: "Low",      color: "#044317" },
+            { range: "55–74", label: "High", color: "#ba4e00" },
+            { range: "35–54", label: "Medium", color: "#684e00" },
+            { range: "0–34", label: "Low", color: "#044317" },
           ].map(({ range, label, color }) => (
             <span
               key={label}
@@ -692,7 +692,7 @@ export default function DashboardPage() {
             style={{
               backgroundColor:
                 t.type === "success" ? "#24a148" :
-                t.type === "error"   ? "#da1e28" : "#0f62fe",
+                  t.type === "error" ? "#da1e28" : "#0f62fe",
               fontSize: "0.875rem",
               letterSpacing: "0.16px",
               boxShadow: "0 2px 6px rgba(0,0,0,0.30)",

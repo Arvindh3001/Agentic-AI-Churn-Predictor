@@ -6,10 +6,10 @@ import { fetchAuditLog, fetchFeedbackStats, getToken } from "@/lib/api";
 
 // Carbon tag colors for event types
 const EVENT_STYLES: Record<string, { bg: string; color: string }> = {
-  hitl_decision:      { bg: "#edf5ff", color: "#0f62fe" },
-  crm_action:         { bg: "#defbe6", color: "#044317" },
-  feedback_recorded:  { bg: "#edf5ff", color: "#0043ce" },
-  retrain_trigger:    { bg: "#fff2e8", color: "#ba4e00" },
+  hitl_decision: { bg: "#edf5ff", color: "#0f62fe" },
+  crm_action: { bg: "#defbe6", color: "#044317" },
+  feedback_recorded: { bg: "#edf5ff", color: "#0043ce" },
+  retrain_trigger: { bg: "#fff2e8", color: "#ba4e00" },
 };
 
 export default function HITLQueuePage() {
@@ -45,10 +45,10 @@ export default function HITLQueuePage() {
     );
   }
 
-  const total    = (stats?.total_feedback as number) ?? 0;
+  const total = (stats?.total_feedback as number) ?? 0;
   const retained = (stats?.retained as number) ?? 0;
-  const churned  = (stats?.churned as number) ?? 0;
-  const unknown  = (stats?.unknown as number) ?? 0;
+  const churned = (stats?.churned as number) ?? 0;
+  const unknownCount = (stats?.unknown as number) ?? 0;
 
   return (
     <div className="space-y-0">
@@ -67,13 +67,13 @@ export default function HITLQueuePage() {
         </p>
       </div>
 
-      {/* ── Feedback stats — flat gray-10 tiles ─────────────────── */}
+      {/* Feedback stats - flat gray-10 tiles */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-px mb-px" style={{ backgroundColor: "#c6c6c6" }}>
         {[
-          { label: "TOTAL FEEDBACK", value: total,    color: "#161616" },
-          { label: "RETAINED",       value: retained, color: "#24a148" },
-          { label: "CHURNED",        value: churned,  color: "#da1e28" },
-          { label: "UNKNOWN",        value: unknown,  color: "#8d8d8d" },
+          { label: "TOTAL FEEDBACK", value: total, color: "#161616" },
+          { label: "RETAINED", value: retained, color: "#24a148" },
+          { label: "CHURNED", value: churned, color: "#da1e28" },
+          { label: "UNKNOWN", value: unknownCount, color: "#8d8d8d" },
         ].map(({ label, value, color }) => (
           <div key={label} style={{ backgroundColor: "#f4f4f4", padding: "24px" }}>
             <p
@@ -88,14 +88,14 @@ export default function HITLQueuePage() {
               {label}
             </p>
             <p style={{ fontSize: "2rem", fontWeight: 300, color, lineHeight: 1.25 }}>
-              {value}
+              {String(value)}
             </p>
           </div>
         ))}
       </div>
 
-      {/* ── A/B breakdown ───────────────────────────────────────── */}
-      {stats?.ab_breakdown && (
+      {/* A/B breakdown */}
+      {!!stats?.ab_breakdown && (
         <div style={{ backgroundColor: "#f4f4f4", padding: "24px", marginTop: "1px", marginBottom: "1px" }}>
           <p
             className="font-semibold mb-4"
@@ -130,7 +130,7 @@ export default function HITLQueuePage() {
         </div>
       )}
 
-      {/* ── Audit log table ─────────────────────────────────────── */}
+      {/* Audit log table */}
       <div style={{ backgroundColor: "#ffffff", marginTop: "8px" }}>
         <div
           className="flex items-center justify-between px-6 py-4"
@@ -193,7 +193,7 @@ export default function HITLQueuePage() {
                   {/* Details */}
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-3 flex-wrap">
-                      {entry.run_id && (
+                      {!!entry.run_id && (
                         <span
                           className="font-mono"
                           style={{ fontSize: "0.75rem", color: "#525252", letterSpacing: "0.16px" }}
@@ -201,7 +201,7 @@ export default function HITLQueuePage() {
                           {(entry.run_id as string).slice(0, 12)}…
                         </span>
                       )}
-                      {entry.customer_id && (
+                      {!!entry.customer_id && (
                         <span
                           className="font-mono"
                           style={{ fontSize: "0.75rem", color: "#0f62fe", letterSpacing: "0.16px" }}
@@ -209,7 +209,7 @@ export default function HITLQueuePage() {
                           {entry.customer_id as string}
                         </span>
                       )}
-                      {entry.decision && (
+                      {!!entry.decision && (
                         <span
                           style={{
                             fontSize: "0.875rem",
@@ -221,13 +221,13 @@ export default function HITLQueuePage() {
                           {entry.decision as string}
                         </span>
                       )}
-                      {entry.outcome && (
+                      {!!entry.outcome && (
                         <span style={{ fontSize: "0.875rem", color: "#0f62fe", letterSpacing: "0.16px" }}>
                           {entry.outcome as string}
                         </span>
                       )}
                     </div>
-                    {entry.notes && (
+                    {!!entry.notes && (
                       <p
                         style={{
                           fontSize: "0.75rem",
