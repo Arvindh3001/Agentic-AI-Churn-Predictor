@@ -148,3 +148,46 @@ class KnapsackSolver:
             "solver_used": "none",
             "reason": reason,
         }
+
+def solve_retention_budget(customers: list[dict[str, Any]], total_budget: float, max_actions_per_customer: int = 1) -> dict[str, Any]:
+    items = []
+    for c in customers:
+        cid = c["customer_id"]
+        clv = c.get("clv", 0.0)
+        for act in c.get("actions", []):
+            cost = act.get("cost", 0.0)
+            red = act.get("prob_reduction", 0.0)
+            items.append({
+                "id": f"{cid}_{act.get('name', 'action')}",
+                "customer_id": cid,
+                "action_name": act.get("name"),
+                "cost_usd": cost,
+                "value_usd": clv * red,
+                "label": f"Action for {cid}"
+            })
+    
+    solver = KnapsackSolver(budget_usd=total_budget)
+    res = solver.solve(items)
+    
+    final_selected = []
+    cust_counts = {}
+    actual_cost = 0.0
+    actual_value = 0.0
+    
+    sorted_selected = sorted(res["selected"], key=lambda x: x["value_usd"]/(x["cost_usd"]+1e-9), reverse=True)
+    
+    for item in sorted_selected:
+        cid = item["customer_id"]
+        if cust_counts.get(cid, 0) < max_actions_per_customer:
+            if actual_cost + item["cost_usd"] <= total_budget:
+                cust_counts[cid] = cust_counts.get(cid, 0) + 1
+                final_selected.append(item)
+                actual_cost += item["cost_usd"]
+                actual_value += item["value_usd"]
+            
+    return {
+        "selected": final_selected,
+        "total_cost": round(actual_cost, 2),
+        "total_value": round(actual_value, 2),
+        "solver_used": res["solver_used"]
+    }
